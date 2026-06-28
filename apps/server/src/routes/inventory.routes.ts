@@ -119,7 +119,7 @@ inventoryRouter.post(
 
 inventoryRouter.patch(
   "/purchase-orders/:id/approve",
-  requireRole("ADMIN", "MANAGER"),
+  requireRole("ADMIN"),
   asyncHandler(async (req, res) => {
     const po = await prisma.purchaseOrder.update({
       where: { id: req.params.id },

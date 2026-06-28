@@ -7,15 +7,16 @@ import { authenticate, requireRole } from "../middleware/auth.js";
 import { createInvoiceForQueueEntry, recordPayment, refundInvoice } from "../services/billing.service.js";
 import { recordAudit } from "../lib/audit.js";
 import { notFound } from "../lib/errors.js";
+import { readPageParams, pagedResult } from "../lib/pagination.js";
 
 export const billingRouter = Router();
 billingRouter.use(authenticate);
 
-// ADMIN's only billing job is refund sign-off (financial control) -- it does not do
-// day-to-day invoicing/payment entry, so it's deliberately left out of this default and
-// only added back on the specific routes it actually needs (read access to navigate to
-// an invoice, plus the refund action itself).
-const operateBilling = requireRole("MANAGER", "CASHIER");
+// Invoicing/payment entry is CASHIER's own named job, full stop -- MANAGER reads the
+// invoice list/detail for oversight (see the GET routes below) but doesn't duplicate the
+// write action, and ADMIN's only billing job is refund sign-off (financial control), kept
+// further down as its own single-actor route.
+const operateBilling = requireRole("CASHIER");
 
 // Vehicles ready for pickup (or already picked up) that don't have an invoice yet.
 billingRouter.get(
@@ -59,18 +60,29 @@ billingRouter.get(
   })
 );
 
+const INVOICE_SORT_FIELDS = ["createdAt", "total", "status"] as const;
+
 billingRouter.get(
   "/invoices",
   requireRole("MANAGER", "CASHIER", "ADMIN"),
   asyncHandler(async (req, res) => {
     const status = req.query.status as string | undefined;
-    const invoices = await prisma.invoice.findMany({
-      where: status ? { status } : undefined,
-      include: { customer: true, payments: true },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
-    res.json(invoices);
+    const params = readPageParams(req, INVOICE_SORT_FIELDS);
+    const where = {
+      status: status || undefined,
+      customer: params.search ? { name: { contains: params.search } } : undefined,
+    };
+    const [invoices, total] = await Promise.all([
+      prisma.invoice.findMany({
+        where,
+        include: { customer: true, payments: true },
+        orderBy: { [params.sortBy ?? "createdAt"]: params.sortDir },
+        skip: (params.page - 1) * params.pageSize,
+        take: params.pageSize,
+      }),
+      prisma.invoice.count({ where }),
+    ]);
+    res.json(pagedResult(invoices, total, params));
   })
 );
 
@@ -94,7 +106,7 @@ billingRouter.post(
 
 billingRouter.post(
   "/invoices/:id/refund",
-  requireRole("ADMIN", "MANAGER"),
+  requireRole("ADMIN"),
   asyncHandler(async (req, res) => {
     const invoice = await refundInvoice(req.params.id);
     await recordAudit({ userId: req.user!.sub, action: "REFUND", entity: "Invoice", entityId: req.params.id });

@@ -7,7 +7,7 @@ import { ApiError } from "../lib/api";
 export function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("manager@ikinamba.rw");
+  const [email, setEmail] = useState("vianew440@gmail.com");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [needsTotp, setNeedsTotp] = useState(false);
@@ -39,8 +39,8 @@ export function Login() {
         <div className="flex items-center gap-2 justify-center mb-6 text-white">
           <Car className="text-brand-400" size={32} />
           <div>
-            <div className="font-bold text-2xl">IKINAMBA</div>
-            <div className="text-xs text-ink-400 text-center">New Class Car Wash</div>
+            <div className="font-bold text-2xl">New Class Car Wash</div>
+            <div className="text-xs text-ink-400 text-center">IKINAMBA staff console</div>
           </div>
         </div>
 

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
+import { NavLink, Link, Outlet, useNavigate, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users, CalendarCheck, LayoutGrid, Wrench, Receipt, BarChart3,
-  Package, ShieldCheck, Sparkles, LogOut, Car, type LucideIcon,
+  Package, ShieldCheck, Sparkles, LogOut, Car, Sun, Moon, ClipboardList, type LucideIcon,
 } from "lucide-react";
 import { useAuth, type Role } from "../context/AuthContext";
+import { useTheme } from "../context/ThemeContext";
 import { ChatWidget } from "./ChatWidget";
 
 export interface NavItem {
@@ -71,7 +72,19 @@ export const NAV_GROUPS: NavGroup[] = [
     icon: ShieldCheck,
     items: [
       { to: "/ai", label: "AI insights", icon: Sparkles, roles: ["MANAGER", "ADMIN"] },
+      // ADMIN-exclusive -- reverted from a brief MANAGER-can-manage-staff experiment
+      // per explicit feedback: "let admin do the admin role, not give it to manager."
       { to: "/users", label: "Users & audit log", icon: ShieldCheck, roles: ["ADMIN"] },
+    ],
+  },
+  {
+    // Separate from "admin" -- CASHIER/RECEPTIONIST/TECHNICIAN should never see a
+    // primary nav icon labeled "Admin" just to reach their own report.
+    id: "my-report",
+    label: "Reports",
+    icon: ClipboardList,
+    items: [
+      { to: "/my-report", label: "My report", icon: ClipboardList, roles: ["CASHIER", "RECEPTIONIST", "TECHNICIAN"] },
     ],
   },
 ];
@@ -91,6 +104,7 @@ function useClock() {
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
   const location = useLocation();
   const now = useClock();
@@ -208,8 +222,9 @@ export function Layout() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0 ml-16">
-        {/* Console status bar -- breadcrumb reflects primary > secondary, not just a page title */}
-        <header className="h-16 shrink-0 border-b border-ink-800 bg-ink-950/80 backdrop-blur flex items-center justify-between px-6">
+        {/* Console status bar -- fixed like the side rail so it never scrolls away with
+            page content, regardless of how tall any given page gets. */}
+        <header className="fixed top-0 left-16 right-0 z-30 h-16 border-b border-ink-800 bg-ink-950/80 backdrop-blur flex items-center justify-between px-6">
           <div className="flex items-center gap-2 font-mono text-xs uppercase tracking-[0.15em]">
             <span className="text-ink-500">IKINAMBA</span>
             <span className="text-ink-700">/</span>
@@ -222,18 +237,25 @@ export function Layout() {
             )}
           </div>
           <div className="flex items-center gap-5">
+            <button
+              onClick={toggleTheme}
+              title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              className="text-ink-400 hover:text-ink-100 hover:bg-ink-800/60 rounded-sm p-1.5 transition-colors"
+            >
+              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
             <span className="font-mono text-sm text-ink-400 tabular-nums hidden sm:inline">
               {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
             </span>
             <div className="h-6 w-px bg-ink-800 hidden sm:block" />
-            <div className="text-right">
+            <Link to="/profile" className="text-right hover:opacity-80 transition-opacity" title="Profile & security">
               <div className="text-xs text-ink-300 leading-tight">{user.email}</div>
               <div className="badge-live text-[10px]">{user.role}</div>
-            </div>
+            </Link>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto mt-16">
           <div className="max-w-7xl mx-auto p-6">
             <Outlet />
           </div>

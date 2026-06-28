@@ -182,6 +182,7 @@ export function Dashboard() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {board?.bays.map((bay) => <BayTile key={bay.id} bay={bay} now={now} />)}
           </div>
+          {board && !board.bays.length && <p className="text-ink-500 text-sm">No bays configured yet.</p>}
 
           <div className="card">
             <div className="flex items-center justify-between mb-3">

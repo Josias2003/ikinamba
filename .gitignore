@@ -11,3 +11,4 @@ apps/server/uploads/*
 *.log
 *.tsbuildinfo
 .DS_Store
+.claude/

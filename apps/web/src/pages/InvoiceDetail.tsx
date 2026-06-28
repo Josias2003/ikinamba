@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Printer } from "lucide-react";
+import { Printer, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { TrackingQrCard } from "../components/TrackingQrCard";
 import { useAuth } from "../context/AuthContext";
@@ -17,15 +17,17 @@ interface InvoiceFull {
 export function InvoiceDetail() {
   const { id } = useParams<{ id: string }>();
   const { user } = useAuth();
-  // ADMIN's only action here is refund sign-off -- recording a payment is day-to-day
-  // billing, blocked on the backend for ADMIN, so the form is hidden rather than shown
-  // disabled or erroring on submit.
-  const canRecordPayment = user?.role !== "ADMIN";
+  // Recording a payment is CASHIER's own named job -- blocked on the backend for every
+  // other role (including MANAGER, which doesn't duplicate it), so the form is hidden
+  // rather than shown disabled or erroring on submit.
+  const canRecordPayment = user?.role === "CASHIER";
+  // Refund is ADMIN's financial-control sign-off action only.
+  const canRefund = user?.role === "ADMIN";
   const qc = useQueryClient();
   const [method, setMethod] = useState("CASH");
   const [amount, setAmount] = useState<number | "">("");
 
-  const { data: invoice } = useQuery({ queryKey: ["invoice", id], queryFn: () => api.get<InvoiceFull>(`/billing/invoices/${id}`) });
+  const { data: invoice, isLoading, isError } = useQuery({ queryKey: ["invoice", id], queryFn: () => api.get<InvoiceFull>(`/billing/invoices/${id}`) });
 
   const pay = useMutation({
     mutationFn: () => api.post(`/billing/invoices/${id}/payments`, { method, amount: Number(amount) }),
@@ -33,7 +35,15 @@ export function InvoiceDetail() {
   });
   const refund = useMutation({ mutationFn: () => api.post(`/billing/invoices/${id}/refund`), onSuccess: () => qc.invalidateQueries({ queryKey: ["invoice", id] }) });
 
-  if (!invoice) return <p className="text-ink-400">Loading...</p>;
+  if (isLoading) return <p className="text-ink-400">Loading...</p>;
+  if (isError || !invoice) {
+    return (
+      <div className="max-w-xl space-y-3">
+        <p className="alert-danger">Couldn't load this invoice -- it may not exist or you may not have access.</p>
+        <Link to="/billing" className="text-brand-400 hover:underline text-sm">&larr; Back to Billing</Link>
+      </div>
+    );
+  }
   const paid = invoice.payments.filter((p) => p.status === "SUCCESS").reduce((s, p) => s + p.amount, 0);
   const balance = invoice.total - paid;
 
@@ -98,8 +108,10 @@ export function InvoiceDetail() {
         )}
         {canRecordPayment && pay.isError && <p className="alert-danger mt-2">{(pay.error as any)?.message}</p>}
 
-        {invoice.status === "PAID" && (
-          <button className="btn-danger text-xs mt-3" onClick={() => refund.mutate()}>Refund</button>
+        {canRefund && invoice.status === "PAID" && (
+          <button className="btn-danger text-xs mt-3" onClick={() => refund.mutate()} disabled={refund.isPending}>
+            {refund.isPending && <Loader2 size={13} className="animate-spin" />} Refund
+          </button>
         )}
       </div>
     </div>

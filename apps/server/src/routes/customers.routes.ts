@@ -6,32 +6,40 @@ import { validateBody } from "../middleware/validate.js";
 import { authenticate, requireRole } from "../middleware/auth.js";
 import { notFound } from "../lib/errors.js";
 import { recordAudit } from "../lib/audit.js";
+import { readPageParams, pagedResult } from "../lib/pagination.js";
 
 export const customersRouter = Router();
 customersRouter.use(authenticate);
 
 const staffOnly = requireRole("MANAGER", "RECEPTIONIST", "CASHIER", "TECHNICIAN");
 
+const CUSTOMER_SORT_FIELDS = ["name", "loyaltyPoints", "createdAt"] as const;
+
 customersRouter.get(
   "/",
   staffOnly,
   asyncHandler(async (req, res) => {
-    const search = (req.query.search as string | undefined)?.trim();
-    const customers = await prisma.customer.findMany({
-      where: search
-        ? {
-            OR: [
-              { name: { contains: search } },
-              { phone: { contains: search } },
-              { vehicles: { some: { plate: { contains: search } } } },
-            ],
-          }
-        : undefined,
-      include: { vehicles: true, insight: true },
-      orderBy: { createdAt: "desc" },
-      take: 100,
-    });
-    res.json(customers);
+    const params = readPageParams(req, CUSTOMER_SORT_FIELDS);
+    const where = params.search
+      ? {
+          OR: [
+            { name: { contains: params.search } },
+            { phone: { contains: params.search } },
+            { vehicles: { some: { plate: { contains: params.search } } } },
+          ],
+        }
+      : undefined;
+    const [customers, total] = await Promise.all([
+      prisma.customer.findMany({
+        where,
+        include: { vehicles: true, insight: true },
+        orderBy: { [params.sortBy ?? "createdAt"]: params.sortDir },
+        skip: (params.page - 1) * params.pageSize,
+        take: params.pageSize,
+      }),
+      prisma.customer.count({ where }),
+    ]);
+    res.json(pagedResult(customers, total, params));
   })
 );
 

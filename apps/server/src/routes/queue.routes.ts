@@ -33,7 +33,7 @@ queueRouter.get(
 
 queueRouter.post(
   "/walk-in",
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   validateBody(z.object({ customerId: z.string(), vehicleId: z.string() })),
   asyncHandler(async (req, res) => {
     const entry = await checkIn(req.body);
@@ -44,12 +44,16 @@ queueRouter.post(
 
 queueRouter.post(
   "/bays/:bayId/assign-next",
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   asyncHandler(async (req, res) => res.json(await assignNextToBay(req.params.bayId)))
 );
 
+// Dispatch decision -- who works on what is RECEPTIONIST's call, not something a
+// technician can reassign for themself or others, and not MANAGER's job either (floor
+// dispatch is RECEPTIONIST's named responsibility, not a shared one).
 queueRouter.patch(
   "/:id/technician",
+  requireRole("RECEPTIONIST"),
   validateBody(z.object({ technicianId: z.string() })),
   asyncHandler(async (req, res) => {
     await setTechnician(req.params.id, req.body.technicianId);
@@ -67,7 +71,7 @@ queueRouter.patch("/:id/quality-check", asyncHandler(async (req, res) => res.jso
 
 queueRouter.patch(
   "/:id/sign-quality-check",
-  requireRole("MANAGER", "TECHNICIAN"),
+  requireRole("TECHNICIAN"),
   asyncHandler(async (req, res) => {
     const entry = await signQualityCheck(req.params.id, req.user!.sub);
     await recordAudit({ userId: req.user!.sub, action: "QC_SIGN_OFF", entity: "QueueEntry", entityId: entry.id });
@@ -77,6 +81,6 @@ queueRouter.patch(
 
 queueRouter.patch(
   "/:id/complete",
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   asyncHandler(async (req, res) => res.json(await completeAndReleaseBay(req.params.id)))
 );

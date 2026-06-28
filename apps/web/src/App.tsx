@@ -2,7 +2,10 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { Layout } from "./components/Layout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { useAuth } from "./context/AuthContext";
+import { Landing } from "./pages/Landing";
 import { Login } from "./pages/Login";
+import { ChangePasswordRequired } from "./pages/ChangePasswordRequired";
+import { Profile } from "./pages/Profile";
 import { Dashboard } from "./pages/Dashboard";
 import { Customers } from "./pages/Customers";
 import { CustomerDetail } from "./pages/CustomerDetail";
@@ -17,6 +20,7 @@ import { Reports } from "./pages/Reports";
 import { Inventory } from "./pages/Inventory";
 import { Users } from "./pages/Users";
 import { AIInsights } from "./pages/AIInsights";
+import { MyReport } from "./pages/MyReport";
 import { NotFound } from "./pages/NotFound";
 
 // Mirrors the backend's per-route requireRole(...) exactly (see
@@ -36,16 +40,35 @@ function Home() {
   return <Dashboard />;
 }
 
+// "/" serves two completely different audiences: an anonymous visitor needs the public
+// marketing Landing page (no app chrome), a logged-in user needs their normal
+// Layout+Home. Both are mounted at the same path -- only one branch ever actually
+// renders for a given request, so this doesn't conflict with the separate Layout
+// instance used by every other authenticated route below.
+function RootGate() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-ink-400">Loading...</div>;
+  if (!user) return <Landing />;
+  if (user.mustChangePassword) return <Navigate to="/change-password" replace />;
+  return <Layout />;
+}
+
 export default function App() {
   return (
     <Routes>
+      <Route path="/" element={<RootGate />}>
+        <Route index element={<Home />} />
+      </Route>
+
       <Route path="/login" element={<Login />} />
       <Route path="/book" element={<BookingPublic />} />
       <Route path="/track/:token" element={<TrackingPublic />} />
 
       <Route element={<ProtectedRoute />}>
+        <Route path="/change-password" element={<ChangePasswordRequired />} />
+
         <Route element={<Layout />}>
-          <Route path="/" element={<Home />} />
+          <Route path="/profile" element={<Profile />} />
 
           <Route element={<ProtectedRoute roles={["MANAGER", "RECEPTIONIST", "CASHIER", "TECHNICIAN"]} />}>
             <Route path="/customers" element={<Customers />} />
@@ -79,6 +102,10 @@ export default function App() {
 
           <Route element={<ProtectedRoute roles={["ADMIN"]} />}>
             <Route path="/users" element={<Users />} />
+          </Route>
+
+          <Route element={<ProtectedRoute roles={["CASHIER", "RECEPTIONIST", "TECHNICIAN"]} />}>
+            <Route path="/my-report" element={<MyReport />} />
           </Route>
         </Route>
       </Route>

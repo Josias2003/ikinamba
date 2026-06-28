@@ -5,9 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <title>IKINAMBA - Smart Vehicle Service &amp; Car Wash Management</title>
+    <title>New Class Car Wash - Online Booking & Service Tracking</title>
   </head>
   <body class="bg-ink-950">
+    <script>
+      // Set the theme attribute before React mounts -- avoids a flash of the wrong
+      // theme and rules out any first-paint timing gap in the React-driven approach.
+      document.documentElement.setAttribute("data-theme", localStorage.getItem("ikinamba_theme") || "dark");
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

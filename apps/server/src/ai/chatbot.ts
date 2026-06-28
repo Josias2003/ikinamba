@@ -88,7 +88,7 @@ export async function askChatbot(history: ChatHistoryItem[], role?: Role): Promi
 
   const today = new Date().toISOString().slice(0, 10);
   const systemPrompt = `
-You are the IKINAMBA virtual assistant for New Class Car Wash in Gisimenti, Kigali, Rwanda.
+You are New Class Car Wash's virtual assistant, Gisimenti, Kigali, Rwanda.
 Today's date is ${today} -- use this to resolve relative dates like "tomorrow" or "Friday".
 You help customers choose services, understand pricing/duration, and book or track a vehicle.
 There are ${bays.length} service bays. Today's service catalog:

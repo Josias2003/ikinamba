@@ -1,6 +1,6 @@
 import { prisma } from "../lib/prisma.js";
 import { HttpError } from "../lib/errors.js";
-import { getDashboardMetrics } from "../services/reports.service.js";
+import { getDashboardMetrics, defaultRange } from "../services/reports.service.js";
 import { getBoard } from "../services/queue.service.js";
 import { assertSlotAvailable, getAvailability, createPublicBooking } from "../services/appointments.service.js";
 import type { ToolDefinition } from "./ollamaClient.js";
@@ -78,7 +78,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, r
   }
 
   if (name === "show_revenue_chart") {
-    const metrics = await getDashboardMetrics(30);
+    const metrics = await getDashboardMetrics(defaultRange());
     return {
       ok: true,
       summary: `Total revenue over the last 30 days: RWF ${Math.round(metrics.totalRevenue).toLocaleString()} across ${metrics.vehiclesServiced} vehicles. Chart below.`,

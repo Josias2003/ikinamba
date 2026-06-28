@@ -29,6 +29,7 @@ diagrams, ER diagrams, screenshots).
 | [05-api-reference.md](05-api-reference.md) | Appendix material backing Ch.4 implementation claims; supports the class/sequence diagrams |
 | [06-ai-ml-module.md](06-ai-ml-module.md) | Ch.4 "Technologies Used" (AI subsystem is the most original technical contribution — worth its own subsection) |
 | [07-testing-and-screens.md](07-testing-and-screens.md) | Ch.4 "Software Testing" and "Presentation of the New System" (drop your own screenshots into the slots listed here) |
+| [08-demo-script.md](08-demo-script.md) | Practice/defense rehearsal — full click-by-click script for every page/action, a role→page access map, credentials, and an honest list of UI gaps to avoid promising live |
 
 ## Quick facts to keep consistent across chapters
 

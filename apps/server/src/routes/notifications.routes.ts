@@ -12,7 +12,7 @@ notificationsRouter.use(authenticate);
 
 notificationsRouter.get(
   "/log",
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   asyncHandler(async (req, res) => {
     const customerId = req.query.customerId as string | undefined;
     const logs = await prisma.notificationLog.findMany({

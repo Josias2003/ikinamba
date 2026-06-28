@@ -64,7 +64,7 @@ export function BookingPublic() {
       <div className="max-w-2xl mx-auto space-y-6">
         <div className="flex items-center gap-2 text-ink-100">
           <Car className="text-brand-400" size={28} />
-          <h1 className="text-2xl font-bold">Book a service at IKINAMBA</h1>
+          <h1 className="text-2xl font-bold">Book a service at New Class Car Wash</h1>
         </div>
 
         <div className="card space-y-3">

@@ -19,10 +19,20 @@ export function Maintenance() {
   const [plate, setPlate] = useState("");
   const [vehicleId, setVehicleId] = useState<string | null>(null);
   const [results, setResults] = useState<VehicleHit[]>([]);
+  const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
   async function search() {
-    const hits = await api.get<VehicleHit[]>(`/vehicles?plate=${encodeURIComponent(plate)}`);
-    setResults(hits);
+    setSearchError("");
+    try {
+      const hits = await api.get<VehicleHit[]>(`/vehicles?plate=${encodeURIComponent(plate)}`);
+      setResults(hits);
+      setSearched(true);
+    } catch {
+      setResults([]);
+      setSearched(true);
+      setSearchError("Search failed -- check your connection and try again.");
+    }
   }
 
   const { data: vehicle } = useQuery({
@@ -38,15 +48,19 @@ export function Maintenance() {
           <input className="input" placeholder="Search by plate number..." value={plate} onChange={(e) => setPlate(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
           <button className="btn-secondary" onClick={search}><Search size={16} /></button>
         </div>
+        {searchError && <p className="alert-danger mt-2">{searchError}</p>}
         {results.length > 0 && (
           <div className="mt-2 space-y-1">
             {results.map((v) => (
-              <button key={v.id} onClick={() => { setVehicleId(v.id); setResults([]); }} className="flex w-full items-center justify-between text-sm border border-ink-800 rounded-sm px-3 py-2 hover:border-brand-300">
+              <button key={v.id} onClick={() => { setVehicleId(v.id); setResults([]); setSearched(false); }} className="flex w-full items-center justify-between text-sm border border-ink-800 rounded-sm px-3 py-2 hover:border-brand-300">
                 <span>{v.make} {v.model} - {v.plate}</span>
                 <span className="text-ink-500">{v.customer.name}</span>
               </button>
             ))}
           </div>
+        )}
+        {searched && !searchError && !results.length && !vehicleId && (
+          <p className="text-ink-400 text-sm mt-2">No vehicle found with that plate number.</p>
         )}
       </div>
 

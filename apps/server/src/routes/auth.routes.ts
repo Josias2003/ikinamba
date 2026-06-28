@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticator } from "otplib";
+import QRCode from "qrcode";
 import { prisma } from "../lib/prisma.js";
 import { hashPassword, verifyPassword, signToken } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
@@ -24,15 +25,27 @@ authRouter.post(
   asyncHandler(async (req, res) => {
     const { email, password, totpCode } = req.body;
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user || !user.isActive) throw unauthorized("Invalid credentials");
+    if (!user || !user.isActive) {
+      // Record the attempt even though there's no user row to attach it to cleanly --
+      // a string of these against the same email is exactly the "someone tried to log in
+      // 3 times" signal the audit log needs to surface.
+      await recordAudit({ action: "FAILED_LOGIN", entity: "User", metadata: { email } });
+      throw unauthorized("Invalid credentials");
+    }
 
     const ok = await verifyPassword(password, user.passwordHash);
-    if (!ok) throw unauthorized("Invalid credentials");
+    if (!ok) {
+      await recordAudit({ userId: user.id, action: "FAILED_LOGIN", entity: "User", entityId: user.id, metadata: { email } });
+      throw unauthorized("Invalid credentials");
+    }
 
     if (STAFF_ROLES.includes(user.role as any) && user.totpEnabled) {
       if (!totpCode) return res.status(401).json({ error: "TOTP_REQUIRED" });
       const valid = authenticator.check(totpCode, user.totpSecret!);
-      if (!valid) throw unauthorized("Invalid authentication code");
+      if (!valid) {
+        await recordAudit({ userId: user.id, action: "FAILED_LOGIN", entity: "User", entityId: user.id, metadata: { email, reason: "bad_totp" } });
+        throw unauthorized("Invalid authentication code");
+      }
     }
 
     const token = signToken({ sub: user.id, role: user.role as any, customerId: user.customerId });
@@ -40,8 +53,17 @@ authRouter.post(
 
     res.json({
       token,
-      user: { id: user.id, email: user.email, role: user.role, customerId: user.customerId },
+      user: { id: user.id, email: user.email, role: user.role, customerId: user.customerId, mustChangePassword: user.mustChangePassword },
     });
+  })
+);
+
+authRouter.post(
+  "/logout",
+  authenticate,
+  asyncHandler(async (req, res) => {
+    await recordAudit({ userId: req.user!.sub, action: "LOGOUT", entity: "User", entityId: req.user!.sub });
+    res.status(204).end();
   })
 );
 
@@ -74,16 +96,45 @@ authRouter.post(
   })
 );
 
+const ME_SELECT = { id: true, email: true, role: true, customerId: true, totpEnabled: true, name: true, phone: true, notifyEmail: true, mustChangePassword: true } as const;
+
 authRouter.get(
   "/me",
   authenticate,
   asyncHandler(async (req, res) => {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user!.sub },
-      select: { id: true, email: true, role: true, customerId: true, totpEnabled: true },
-    });
+    const user = await prisma.user.findUnique({ where: { id: req.user!.sub }, select: ME_SELECT });
     if (!user) throw unauthorized();
     res.json(user);
+  })
+);
+
+// Self-service profile update -- only ever touches the caller's own row, so no role
+// restriction beyond being logged in at all.
+authRouter.patch(
+  "/me",
+  authenticate,
+  validateBody(z.object({ name: z.string().optional(), phone: z.string().optional(), notifyEmail: z.boolean().optional() })),
+  asyncHandler(async (req, res) => {
+    const user = await prisma.user.update({ where: { id: req.user!.sub }, data: req.body, select: ME_SELECT });
+    res.json(user);
+  })
+);
+
+// Serves both the forced first-login change and any later voluntary change from
+// Profile -- same action either way, just a different entry point on the frontend.
+authRouter.post(
+  "/change-password",
+  authenticate,
+  validateBody(z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(8) })),
+  asyncHandler(async (req, res) => {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.sub } });
+    if (!user) throw unauthorized();
+    const ok = await verifyPassword(req.body.currentPassword, user.passwordHash);
+    if (!ok) throw unauthorized("Current password is incorrect");
+    const passwordHash = await hashPassword(req.body.newPassword);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash, mustChangePassword: false } });
+    await recordAudit({ userId: user.id, action: "CHANGE_PASSWORD", entity: "User", entityId: user.id });
+    res.json({ ok: true });
   })
 );
 
@@ -96,7 +147,10 @@ authRouter.post(
     const secret = authenticator.generateSecret();
     await prisma.user.update({ where: { id: req.user!.sub }, data: { totpSecret: secret } });
     const otpauth = authenticator.keyuri(req.user!.sub, "IKINAMBA", secret);
-    res.json({ secret, otpauth });
+    // Data-URI QR so the frontend can render an <img> directly -- no separate endpoint
+    // that would otherwise need the secret/otpauth passed back through a URL.
+    const qrDataUrl = await QRCode.toDataURL(otpauth);
+    res.json({ secret, otpauth, qrDataUrl });
   })
 );
 
@@ -110,6 +164,22 @@ authRouter.post(
     const valid = authenticator.check(req.body.code, user.totpSecret);
     if (!valid) throw unauthorized("Invalid code");
     await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: true } });
+    res.json({ ok: true });
+  })
+);
+
+// Disabling 2FA requires a current code, not just the session -- proves the requester
+// still controls the authenticator rather than e.g. an unattended logged-in browser.
+authRouter.post(
+  "/mfa/disable",
+  authenticate,
+  validateBody(z.object({ code: z.string() })),
+  asyncHandler(async (req, res) => {
+    const user = await prisma.user.findUnique({ where: { id: req.user!.sub } });
+    if (!user?.totpEnabled || !user.totpSecret) throw badRequest("2FA is not enabled");
+    const valid = authenticator.check(req.body.code, user.totpSecret);
+    if (!valid) throw unauthorized("Invalid code");
+    await prisma.user.update({ where: { id: user.id }, data: { totpEnabled: false, totpSecret: null } });
     res.json({ ok: true });
   })
 );

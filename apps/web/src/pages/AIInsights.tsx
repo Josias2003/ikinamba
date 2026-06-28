@@ -2,6 +2,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { RefreshCw, Loader2, Wifi, WifiOff } from "lucide-react";
 import { api } from "../lib/api";
+import { useTheme } from "../context/ThemeContext";
+import { useAuth } from "../context/AuthContext";
 
 interface InsightsResponse { metricsSummary: string; narrative: string }
 interface AtRisk { customerId: string; churnRisk: number; churnRiskLabel: string; maintenanceDueScore: number; customer: { name: string; phone: string } }
@@ -10,6 +12,13 @@ interface ForecastDay { date: string; weekday: number; expectedVisits: number; s
 const WEEKDAY_LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export function AIInsights() {
+  const { user } = useAuth();
+  // Recompute is MANAGER's operational action, not ADMIN's oversight-only view of this
+  // page (see [[project-kariza-roles-separation]]) -- hide it rather than show a button
+  // that 403s.
+  const canRecompute = user?.role === "MANAGER";
+  const { theme } = useTheme();
+  const tickFill = theme === "dark" ? "#9aa7ae" : "#566873";
   const qc = useQueryClient();
   const { data: status } = useQuery({ queryKey: ["ai-status"], queryFn: () => api.get<{ ollamaAvailable: boolean }>("/ai/status") });
   const { data: insights, isLoading, refetch, isFetching } = useQuery({
@@ -33,9 +42,11 @@ export function AIInsights() {
         ) : (
           <span className="badge-danger"><WifiOff size={12} /> Local AI offline</span>
         )}
-        <button className="btn-secondary text-xs" onClick={() => recompute.mutate()} disabled={recompute.isPending}>
-          <RefreshCw size={14} className={recompute.isPending ? "animate-spin" : ""} /> Recompute scores
-        </button>
+        {canRecompute && (
+          <button className="btn-secondary text-xs" onClick={() => recompute.mutate()} disabled={recompute.isPending}>
+            <RefreshCw size={14} className={recompute.isPending ? "animate-spin" : ""} /> Recompute scores
+          </button>
+        )}
       </div>
 
       <div className="card">
@@ -63,8 +74,8 @@ export function AIInsights() {
         </div>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={forecast}>
-            <XAxis dataKey="weekday" tickFormatter={(w) => WEEKDAY_LABEL[w]} tick={{ fontSize: 11, fill: "#9aa7ae" }} />
-            <YAxis tick={{ fontSize: 11, fill: "#9aa7ae" }} allowDecimals={false} />
+            <XAxis dataKey="weekday" tickFormatter={(w) => WEEKDAY_LABEL[w]} tick={{ fontSize: 11, fill: tickFill }} />
+            <YAxis tick={{ fontSize: 11, fill: tickFill }} allowDecimals={false} />
             <Tooltip
               formatter={(value: number, _name, item) => [`${value} vehicles`, item.payload.date]}
               contentStyle={{ background: "#161c1f", border: "1px solid #252e33", borderRadius: 2 }}

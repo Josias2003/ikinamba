@@ -9,6 +9,10 @@ export interface CurrentUser {
   role: Role;
   customerId: string | null;
   totpEnabled?: boolean;
+  name?: string | null;
+  phone?: string | null;
+  notifyEmail?: boolean;
+  mustChangePassword?: boolean;
 }
 
 interface AuthContextValue {
@@ -16,6 +20,7 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string, totpCode?: string) => Promise<void>;
   logout: () => void;
+  markPasswordChanged: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -47,11 +52,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    // Best-effort -- the audit trail matters, but a failed/expired-token logout call
+    // shouldn't block the user from clearing their local session.
+    api.post("/auth/logout").catch(() => {});
     clearToken();
     setUser(null);
   }
 
-  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
+  // Clears the forced-change gate locally right after a successful /auth/change-password
+  // call, instead of requiring a full reload to re-fetch /auth/me.
+  function markPasswordChanged() {
+    setUser((u) => (u ? { ...u, mustChangePassword: false } : u));
+  }
+
+  return <AuthContext.Provider value={{ user, loading, login, logout, markPasswordChanged }}>{children}</AuthContext.Provider>;
 }
 
 export function useAuth() {

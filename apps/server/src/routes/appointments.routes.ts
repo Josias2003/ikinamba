@@ -48,7 +48,7 @@ appointmentsRouter.post(
 appointmentsRouter.get(
   "/",
   authenticate,
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   asyncHandler(async (req, res) => {
     const date = req.query.date as string | undefined;
     const where = date
@@ -66,7 +66,7 @@ appointmentsRouter.get(
 appointmentsRouter.patch(
   "/:id/reschedule",
   authenticate,
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   validateBody(z.object({ scheduledAt: z.string() })),
   asyncHandler(async (req, res) => {
     const scheduledAt = new Date(req.body.scheduledAt);
@@ -79,7 +79,7 @@ appointmentsRouter.patch(
 appointmentsRouter.patch(
   "/:id/cancel",
   authenticate,
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   asyncHandler(async (req, res) => {
     const appt = await prisma.appointment.update({ where: { id: req.params.id }, data: { status: "CANCELLED" } });
     res.json(appt);
@@ -90,7 +90,7 @@ appointmentsRouter.patch(
 appointmentsRouter.post(
   "/:id/check-in",
   authenticate,
-  requireRole("MANAGER", "RECEPTIONIST"),
+  requireRole("RECEPTIONIST"),
   asyncHandler(async (req, res) => {
     const appt = await prisma.appointment.findUnique({ where: { id: req.params.id } });
     if (!appt) throw notFound("Appointment not found");

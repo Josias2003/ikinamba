@@ -1,7 +1,10 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Download } from "lucide-react";
 import { api } from "../lib/api";
+import { useTheme } from "../context/ThemeContext";
+import { DateRangePicker, defaultDateRange, type DateRangeValue } from "../components/DateRangePicker";
 
 interface Metrics {
   revenueByDay: { date: string; total: number }[];
@@ -15,22 +18,37 @@ interface Metrics {
 }
 
 export function Reports() {
-  const { data } = useQuery({ queryKey: ["reports-dashboard"], queryFn: () => api.get<Metrics>("/reports/dashboard?days=30") });
+  const { theme } = useTheme();
+  // Recharts needs literal color strings, not Tailwind classes -- pick the grid-line
+  // shade per theme so it stays subtle-but-visible against either background instead of
+  // disappearing (light-on-dark works for dark mode, but would be near-invisible on a
+  // light-mode white card).
+  const gridStroke = theme === "dark" ? "#e3e8ea" : "#c3ccd1";
+  const [range, setRange] = useState<DateRangeValue>(defaultDateRange());
+  const { data } = useQuery({
+    queryKey: ["reports-dashboard", range],
+    queryFn: () => api.get<Metrics>(`/reports/dashboard?since=${range.since}&until=${range.until}`),
+  });
+
+  const exportQS = `since=${range.since}&until=${range.until}`;
 
   if (!data) return <p className="text-ink-400">Loading...</p>;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-end gap-2">
-        <a className="btn-secondary" href="/api/reports/export/excel" target="_blank" rel="noreferrer"><Download size={14} /> Excel</a>
-        <a className="btn-secondary" href="/api/reports/export/pdf" target="_blank" rel="noreferrer"><Download size={14} /> PDF</a>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <DateRangePicker value={range} onChange={setRange} />
+        <div className="flex items-center gap-2">
+          <button className="btn-secondary" onClick={() => api.download(`/reports/export/excel?${exportQS}`, "ikinamba-report.xlsx")}><Download size={14} /> Excel</button>
+          <button className="btn-secondary" onClick={() => api.download(`/reports/export/pdf?${exportQS}`, "ikinamba-report.pdf")}><Download size={14} /> PDF</button>
+        </div>
       </div>
 
       <div className="card">
-        <h3 className="font-semibold text-ink-200 mb-3">Revenue trend (30 days)</h3>
+        <h3 className="font-semibold text-ink-200 mb-3">Revenue trend ({range.since} to {range.until})</h3>
         <ResponsiveContainer width="100%" height={260}>
           <LineChart data={data.revenueByDay}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e3e8ea" />
+            <CartesianGrid strokeDasharray="3 3" stroke={gridStroke} />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
             <Tooltip />

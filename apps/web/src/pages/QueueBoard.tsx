@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Car, UserPlus, Search, CheckCircle2, ShieldCheck, Plus, QrCode, ScanLine, AlertTriangle } from "lucide-react";
 import { api, ApiError } from "../lib/api";
@@ -23,23 +23,33 @@ const STATUS_LABEL: Record<string, string> = { IN_SERVICE: "In service", QUALITY
 const BAY_BADGE: Record<string, string> = { IDLE: "badge-neutral", OCCUPIED: "badge-live", MAINTENANCE: "badge-danger" };
 
 // Mirrors the backend's RBAC per route (see queue.routes.ts) so staff aren't shown buttons
-// they're not permitted to use -- e.g. a receptionist can move a job to QC but can't sign off
-// on it themselves (separation of duties), so that button is hidden rather than failing silently.
-// ADMIN doesn't run the floor (real per-role separation, not seniority) -- it has no
-// access to this page at all, see Layout.tsx NAV_GROUPS.
-const CAN_ASSIGN_BAY = ["MANAGER", "RECEPTIONIST"];
-const CAN_WALK_IN = ["MANAGER", "RECEPTIONIST"];
-const CAN_SIGN_QC = ["MANAGER", "TECHNICIAN"];
+// they're not permitted to use. Floor dispatch (walk-in, bay assignment, technician
+// assignment, completion) is RECEPTIONIST's own named job; QC sign-off is TECHNICIAN's --
+// MANAGER doesn't duplicate either anymore (real per-role separation, not seniority), it
+// keeps page access to see the floor at a glance but the action buttons aren't its job.
+// ADMIN has no access to this page at all, see Layout.tsx NAV_GROUPS.
+const CAN_ASSIGN_BAY = ["RECEPTIONIST"];
+const CAN_WALK_IN = ["RECEPTIONIST"];
+const CAN_SIGN_QC = ["TECHNICIAN"];
+// Who works on what is a dispatch decision -- a technician can't reassign jobs
+// (including to themself), only RECEPTIONIST can.
+const CAN_ASSIGN_TECH = ["RECEPTIONIST"];
 
-const CAN_COMPLETE = ["MANAGER", "RECEPTIONIST"];
+const CAN_COMPLETE = ["RECEPTIONIST"];
 
 export function QueueBoard() {
+  const [waitingFilter, setWaitingFilter] = useState("");
   const qc = useQueryClient();
   const { user } = useAuth();
   const [error, setError] = useState("");
   const [qrToken, setQrToken] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const { data: board } = useQuery({ queryKey: ["queue-board"], queryFn: () => api.get<Board>("/queue/board") });
+  const visibleWaiting = useMemo(() => {
+    const term = waitingFilter.trim().toLowerCase();
+    if (!term) return board?.waiting;
+    return board?.waiting.filter((e) => e.vehicle.plate.toLowerCase().includes(term) || e.customer.name.toLowerCase().includes(term));
+  }, [board?.waiting, waitingFilter]);
   const { data: technicians } = useQuery({ queryKey: ["technicians"], queryFn: () => api.get<Technician[]>("/queue/technicians") });
   const { data: catalog } = useQuery({ queryKey: ["catalog"], queryFn: () => api.get<CatalogItem[]>("/catalog", { auth: false }) });
 
@@ -136,14 +146,20 @@ export function QueueBoard() {
 
                   <AddItemsControl catalog={catalog} onAdd={(itemIds) => addItems.mutate({ id: entry.id, itemIds })} />
 
-                  <select
-                    className="input text-xs"
-                    value={entry.serviceJob?.technician?.id ?? ""}
-                    onChange={(e) => assignTechnician.mutate({ id: entry.id, technicianId: e.target.value })}
-                  >
-                    <option value="">Assign technician...</option>
-                    {technicians?.map((t) => <option key={t.id} value={t.id}>{t.email}</option>)}
-                  </select>
+                  {user && CAN_ASSIGN_TECH.includes(user.role) ? (
+                    <select
+                      className="input text-xs"
+                      value={entry.serviceJob?.technician?.id ?? ""}
+                      onChange={(e) => assignTechnician.mutate({ id: entry.id, technicianId: e.target.value })}
+                    >
+                      <option value="">Assign technician...</option>
+                      {technicians?.map((t) => <option key={t.id} value={t.id}>{t.email}</option>)}
+                    </select>
+                  ) : (
+                    <p className="text-xs text-ink-500">
+                      Technician: {entry.serviceJob?.technician?.email ?? "unassigned"}
+                    </p>
+                  )}
 
                   <div className="flex gap-2 pt-2">
                     {entry.status === "IN_SERVICE" && (
@@ -155,7 +171,7 @@ export function QueueBoard() {
                       </button>
                     )}
                     {entry.status === "QUALITY_CHECK" && user && !CAN_SIGN_QC.includes(user.role) && (
-                      <span className="text-xs text-ink-400">Awaiting technician/manager sign-off</span>
+                      <span className="text-xs text-ink-400">Awaiting technician sign-off</span>
                     )}
                     {entry.status === "READY" && (
                       <button className="btn-secondary text-xs" onClick={() => complete.mutate(entry.id)}>
@@ -177,9 +193,15 @@ export function QueueBoard() {
       </div>
 
       <div className="card">
-        <h3 className="font-semibold text-ink-200 mb-3">Waiting ({board?.waiting.length ?? 0})</h3>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h3 className="font-semibold text-ink-200">Waiting ({board?.waiting.length ?? 0})</h3>
+          <div className="relative max-w-xs">
+            <Search className="absolute left-3 top-2 text-ink-400" size={14} />
+            <input className="input pl-8 text-xs py-1.5" placeholder="Filter plate or customer..." value={waitingFilter} onChange={(e) => setWaitingFilter(e.target.value)} />
+          </div>
+        </div>
         <div className="space-y-2">
-          {board?.waiting.map((e, i) => (
+          {visibleWaiting?.map((e, i) => (
             <div key={e.id} className="flex items-center justify-between text-sm border border-ink-800 rounded-sm px-3 py-2">
               <span className="text-ink-400 w-6">#{i + 1}</span>
               <span className="flex-1">{e.vehicle.make} {e.vehicle.model} - {e.vehicle.plate}</span>
@@ -189,7 +211,9 @@ export function QueueBoard() {
               </button>
             </div>
           ))}
-          {!board?.waiting.length && <p className="text-ink-400 text-sm">No vehicles waiting.</p>}
+          {!visibleWaiting?.length && (
+            <p className="text-ink-400 text-sm">{waitingFilter ? `No waiting vehicles match "${waitingFilter}".` : "No vehicles waiting."}</p>
+          )}
         </div>
       </div>
     </div>
@@ -216,14 +240,24 @@ function AddItemsControl({ catalog, onAdd }: { catalog?: CatalogItem[]; onAdd: (
 function WalkInForm({ onCheckedIn }: { onCheckedIn: (entry: Entry) => void }) {
   const [plate, setPlate] = useState("");
   const [results, setResults] = useState<VehicleHit[]>([]);
+  const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const checkIn = useMutation({
     mutationFn: (v: VehicleHit) => api.post<Entry>("/queue/walk-in", { customerId: v.customer.id, vehicleId: v.id }),
-    onSuccess: (entry) => { onCheckedIn(entry); setPlate(""); setResults([]); },
+    onSuccess: (entry) => { onCheckedIn(entry); setPlate(""); setResults([]); setSearched(false); },
   });
 
   async function search() {
-    const hits = await api.get<VehicleHit[]>(`/vehicles?plate=${encodeURIComponent(plate)}`);
-    setResults(hits);
+    setSearchError("");
+    try {
+      const hits = await api.get<VehicleHit[]>(`/vehicles?plate=${encodeURIComponent(plate)}`);
+      setResults(hits);
+      setSearched(true);
+    } catch {
+      setResults([]);
+      setSearched(true);
+      setSearchError("Search failed -- check your connection and try again.");
+    }
   }
 
   return (
@@ -233,6 +267,7 @@ function WalkInForm({ onCheckedIn }: { onCheckedIn: (entry: Entry) => void }) {
         <input className="input" placeholder="Search plate number..." value={plate} onChange={(e) => setPlate(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
         <button className="btn-secondary" onClick={search}><Search size={16} /></button>
       </div>
+      {searchError && <p className="alert-danger mt-2">{searchError}</p>}
       {results.length > 0 && (
         <div className="mt-2 space-y-1">
           {results.map((v) => (
@@ -242,6 +277,9 @@ function WalkInForm({ onCheckedIn }: { onCheckedIn: (entry: Entry) => void }) {
             </div>
           ))}
         </div>
+      )}
+      {searched && !searchError && !results.length && (
+        <p className="text-ink-400 text-sm mt-2">No vehicle found with that plate number.</p>
       )}
     </div>
   );

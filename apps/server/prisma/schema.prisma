@@ -1,14 +1,13 @@
 // IKINAMBA data model.
-// SQLite for dev (no native enum support -> roles/statuses are validated strings,
-// see src/types/enums.ts for the canonical value lists). Swapping to Postgres later
-// is a `provider` + `DATABASE_URL` change; the schema itself is portable.
+// MySQL (no native enum support -> roles/statuses are validated strings,
+// see src/types/enums.ts for the canonical value lists).
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -20,6 +19,10 @@ model User {
   isActive     Boolean  @default(true)
   totpSecret   String?
   totpEnabled  Boolean  @default(false)
+  mustChangePassword Boolean @default(true)
+  name         String?
+  phone        String?
+  notifyEmail  Boolean  @default(true)
   customerId   String?  @unique
   customer     Customer? @relation(fields: [customerId], references: [id])
   createdAt    DateTime @default(now())
@@ -116,7 +119,7 @@ model Appointment {
   scheduledAt DateTime
   status      String   @default("CONFIRMED") // CONFIRMED | WAITLISTED | CANCELLED | COMPLETED | NO_SHOW
   source      String   @default("ONLINE") // ONLINE | PHONE | WALK_IN
-  notes       String?
+  notes       String?  @db.Text
   // Issued at booking time so the QR/link in the confirmation email keeps working
   // through check-in -- carried over verbatim into QueueEntry.trackingToken.
   trackingToken String? @unique
@@ -171,7 +174,7 @@ model ServiceJob {
   qcSignedById  String?
   qcSignedBy    User?    @relation("QcSigner", fields: [qcSignedById], references: [id])
   qcSignedAt    DateTime?
-  notes         String?
+  notes         String?  @db.Text
 
   items ServiceJobItem[]
 }
@@ -195,10 +198,10 @@ model MaintenanceInspection {
   queueEntry      QueueEntry? @relation(fields: [queueEntryId], references: [id])
   technicianId    String
   technician      User     @relation(fields: [technicianId], references: [id])
-  checklist       String   // JSON: [{ item, status, notes }]
+  checklist       String   @db.Text // JSON: [{ item, status, notes }]
   dtcCodes        String   @default("[]") // JSON string[] -- manually entered by technician
   mileage         Int?
-  findings        String?
+  findings        String?  @db.Text
   nextServiceDueAt DateTime?
   createdAt       DateTime @default(now())
 
@@ -261,9 +264,9 @@ model NotificationLog {
   channel    String   // EMAIL | IN_APP
   template   String
   subject    String?
-  body       String
+  body       String   @db.Text
   status     String   @default("SENT") // SENT | FAILED | QUEUED
-  meta       String? // JSON
+  meta       String?  @db.Text // JSON
   createdAt  DateTime @default(now())
 }
 
@@ -274,7 +277,7 @@ model Message {
   sender     String   // CUSTOMER | STAFF
   staffId    String?
   staff      User?    @relation("StaffSender", fields: [staffId], references: [id])
-  body       String
+  body       String   @db.Text
   createdAt  DateTime @default(now())
   readAt     DateTime?
 }
@@ -333,7 +336,9 @@ model AuditLog {
   action    String
   entity    String
   entityId  String?
-  metadata  String? // JSON
+  metadata  String?  @db.Text // JSON
+  category  String   @default("OTHER") // AUTH | BILLING | INVENTORY | USER_MGMT | QUEUE | OTHER
+  severity  String   @default("INFO") // INFO | WARNING | DANGER
   createdAt DateTime @default(now())
 }
 

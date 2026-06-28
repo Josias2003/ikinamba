@@ -3,6 +3,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { Search, Plus, X } from "lucide-react";
 import { api } from "../lib/api";
+import { SortableHeader, toggleSort, type SortState } from "../components/SortableHeader";
+import { Pagination } from "../components/Pagination";
+
+// Sortable server-side (real columns on Customer); churn risk lives on a related model and
+// isn't part of this list -- stays a plain column.
+type SortField = "name" | "loyaltyPoints";
 
 interface Vehicle { id: string; make: string; model: string; plate: string }
 interface Insight { churnRiskLabel: string }
@@ -10,6 +16,7 @@ interface Customer {
   id: string; name: string; phone: string; email?: string | null;
   loyaltyTier: string; loyaltyPoints: number; vehicles: Vehicle[]; insight?: Insight | null;
 }
+interface Paged<T> { data: T[]; total: number; page: number; pageSize: number }
 
 const TIER_BADGE: Record<string, string> = {
   GOLD: "badge-gold",
@@ -25,12 +32,27 @@ const RISK_BADGE: Record<string, string> = {
 export function Customers() {
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  const [sort, setSort] = useState<SortState<SortField>>({ field: null, direction: "asc" });
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
   const qc = useQueryClient();
 
-  const { data: customers, isLoading } = useQuery({
-    queryKey: ["customers", search],
-    queryFn: () => api.get<Customer[]>(`/customers${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  const qs = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+    ...(search ? { search } : {}),
+    ...(sort.field ? { sortBy: sort.field, sortDir: sort.direction } : {}),
   });
+  const { data, isLoading } = useQuery({
+    queryKey: ["customers", page, search, sort],
+    queryFn: () => api.get<Paged<Customer>>(`/customers?${qs.toString()}`),
+  });
+  const customers = data?.data;
+
+  function onSort(field: SortField) {
+    setSort(toggleSort(sort, field));
+    setPage(1);
+  }
 
   const createMutation = useMutation({
     mutationFn: (body: any) => api.post("/customers", body),
@@ -54,7 +76,7 @@ export function Customers() {
           className="input pl-9"
           placeholder="Search by name, phone, or plate..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
         />
       </div>
 
@@ -66,16 +88,19 @@ export function Customers() {
         <table className="w-full text-sm">
           <thead className="bg-ink-950 text-ink-500 text-left">
             <tr>
-              <th className="px-4 py-3">Name</th>
+              <SortableHeader className="px-4 py-3" field="name" label="Name" sort={sort} onSort={onSort} />
               <th className="px-4 py-3">Phone</th>
               <th className="px-4 py-3">Vehicles</th>
-              <th className="px-4 py-3">Loyalty</th>
+              <SortableHeader className="px-4 py-3" field="loyaltyPoints" label="Loyalty" sort={sort} onSort={onSort} />
               <th className="px-4 py-3">AI Churn Risk</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-ink-800">
             {isLoading && (
               <tr><td colSpan={5} className="px-4 py-6 text-center text-ink-400">Loading...</td></tr>
+            )}
+            {!isLoading && !customers?.length && (
+              <tr><td colSpan={5} className="px-4 py-6 text-center text-ink-400">No customers match{search ? " your search" : ""}.</td></tr>
             )}
             {customers?.map((c) => (
               <tr key={c.id} className="hover:bg-ink-800">
@@ -100,6 +125,8 @@ export function Customers() {
           </tbody>
         </table>
       </div>
+
+      {data && <Pagination page={data.page} pageSize={data.pageSize} total={data.total} onPageChange={setPage} />}
     </div>
   );
 }

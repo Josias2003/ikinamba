@@ -3,6 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from "recharts";
 import { MessageCircle, X, Send, Bot, Loader2, Mic } from "lucide-react";
 import { api } from "../lib/api";
 import { TrackingQrCard } from "./TrackingQrCard";
+import { useTheme } from "../context/ThemeContext";
 
 interface ChatDisplay {
   type: "revenueChart" | "queueStatus" | "bookingConfirmed" | "bookingPreview";
@@ -20,13 +21,16 @@ const SpeechRecognitionCtor: any = (window as any).SpeechRecognition || (window 
 /** Renders the structured result of a chatbot tool call (booking confirmation, a live
  * chart, queue status) inline in the chat bubble, instead of just narrating it in text. */
 function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
+  const { theme } = useTheme();
+  const tickFill = theme === "dark" ? "#9aa7ae" : "#566873";
+
   if (display.type === "revenueChart") {
     return (
       <div className="mt-2 bg-ink-950 rounded-sm p-2">
         <ResponsiveContainer width="100%" height={120}>
           <BarChart data={display.data}>
-            <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#9aa7ae" }} />
-            <YAxis tick={{ fontSize: 9, fill: "#9aa7ae" }} width={28} />
+            <XAxis dataKey="date" tick={{ fontSize: 9, fill: tickFill }} />
+            <YAxis tick={{ fontSize: 9, fill: tickFill }} width={28} />
             <Bar dataKey="total" fill="#1ea696" radius={2} />
           </BarChart>
         </ResponsiveContainer>
@@ -72,7 +76,7 @@ function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: "assistant", content: "Hi! I'm the IKINAMBA assistant. Ask me about services, pricing, or how to book or track your vehicle." },
+    { role: "assistant", content: "Hi! I'm New Class Car Wash's assistant. Ask me about services, pricing, or how to book or track your vehicle." },
   ]);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
@@ -132,7 +136,7 @@ export function ChatWidget() {
     <div className="fixed bottom-6 right-6 z-50 w-80 sm:w-96 h-[28rem] bg-ink-900 rounded-2xl shadow-2xl border border-ink-700 flex flex-col overflow-hidden">
       <div className="bg-ink-950 text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm font-semibold">
-          <Bot size={18} className="text-brand-400" /> IKINAMBA Assistant
+          <Bot size={18} className="text-brand-400" /> New Class Car Wash Assistant
         </div>
         <button onClick={() => setOpen(false)} className="text-ink-300 hover:text-white">
           <X size={18} />

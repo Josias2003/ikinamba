@@ -8,7 +8,11 @@ import { hashPassword } from "../lib/auth.js";
 import { recordAudit } from "../lib/audit.js";
 import { ROLES } from "../types/enums.js";
 import { runDailyBackup } from "../jobs/backup.js";
+import { readPageParams, pagedResult } from "../lib/pagination.js";
 
+// ADMIN-exclusive -- user/account management is the admin role's own job, not something
+// to share with MANAGER (reverted after explicit feedback: "let admin do the admin role,
+// not give it to manager" -- see [[project-kariza-roles-separation]]).
 export const usersRouter = Router();
 usersRouter.use(authenticate, requireRole("ADMIN"));
 
@@ -57,7 +61,33 @@ usersRouter.post(
 
 usersRouter.get(
   "/audit-log",
-  asyncHandler(async (_req, res) => {
-    res.json(await prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 200, include: { user: { select: { email: true } } } }));
+  asyncHandler(async (req, res) => {
+    const { category, since, until } = req.query as { category?: string; since?: string; until?: string };
+    const params = readPageParams(req, ["createdAt"] as const);
+    const where = {
+      category: category && category !== "ALL" ? category : undefined,
+      createdAt: {
+        gte: since ? new Date(since) : undefined,
+        lte: until ? new Date(`${until}T23:59:59`) : undefined,
+      },
+      OR: params.search
+        ? [
+            { action: { contains: params.search } },
+            { entity: { contains: params.search } },
+            { user: { email: { contains: params.search } } },
+          ]
+        : undefined,
+    };
+    const [logs, total] = await Promise.all([
+      prisma.auditLog.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        skip: (params.page - 1) * params.pageSize,
+        take: params.pageSize,
+        include: { user: { select: { email: true } } },
+      }),
+      prisma.auditLog.count({ where }),
+    ]);
+    res.json(pagedResult(logs, total, params));
   })
 );
