@@ -1,0 +1,349 @@
+// IKINAMBA data model.
+// SQLite for dev (no native enum support -> roles/statuses are validated strings,
+// see src/types/enums.ts for the canonical value lists). Swapping to Postgres later
+// is a `provider` + `DATABASE_URL` change; the schema itself is portable.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  role         String // ADMIN | MANAGER | CASHIER | RECEPTIONIST | TECHNICIAN | CUSTOMER
+  isActive     Boolean  @default(true)
+  totpSecret   String?
+  totpEnabled  Boolean  @default(false)
+  customerId   String?  @unique
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  auditLogs       AuditLog[]
+  serviceJobsDone ServiceJob[] @relation("Technician")
+  qcSigned        ServiceJob[] @relation("QcSigner")
+  inspections     MaintenanceInspection[]
+  staffMessages   Message[]    @relation("StaffSender")
+  purchaseOrdersCreated  PurchaseOrder[] @relation("PoCreatedBy")
+  purchaseOrdersApproved PurchaseOrder[] @relation("PoApprovedBy")
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  name          String
+  phone         String
+  email         String?
+  address       String?
+  preferredContact String @default("PHONE") // PHONE | EMAIL | SMS
+  loyaltyTier   String   @default("BRONZE") // BRONZE | SILVER | GOLD
+  loyaltyPoints Int      @default(0)
+  totalSpend    Float    @default(0)
+  createdAt     DateTime @default(now())
+
+  userAccount   User?
+  vehicles      Vehicle[]
+  appointments  Appointment[]
+  queueEntries  QueueEntry[]
+  invoices      Invoice[]
+  loyaltyTxns   LoyaltyTransaction[]
+  notifications NotificationLog[]
+  messages      Message[]
+  insight       CustomerInsight?
+}
+
+model Vehicle {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  make       String
+  model      String
+  year       Int
+  plate      String   @unique
+  vin        String?
+  color      String?
+  createdAt  DateTime @default(now())
+
+  photos       VehiclePhoto[]
+  appointments Appointment[]
+  queueEntries QueueEntry[]
+  inspections  MaintenanceInspection[]
+}
+
+model VehiclePhoto {
+  id           String   @id @default(cuid())
+  vehicleId    String
+  vehicle      Vehicle  @relation(fields: [vehicleId], references: [id])
+  inspectionId String?
+  inspection   MaintenanceInspection? @relation(fields: [inspectionId], references: [id])
+  url          String
+  caption      String?
+  type         String   // INTAKE | DAMAGE | INSPECTION
+  takenAt      DateTime @default(now())
+}
+
+model ServiceCatalogItem {
+  id              String  @id @default(cuid())
+  name            String
+  category        String  // WASH | DETAIL | MAINTENANCE | INSPECTION | ADDON
+  basePrice       Float
+  durationMinutes Int
+  isActive        Boolean @default(true)
+
+  appointmentItems AppointmentServiceItem[]
+  jobItems         ServiceJobItem[]
+}
+
+model Bay {
+  id     String @id @default(cuid())
+  name   String @unique
+  status String @default("IDLE") // IDLE | OCCUPIED | MAINTENANCE
+
+  queueEntries QueueEntry[]
+}
+
+model Appointment {
+  id          String   @id @default(cuid())
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  vehicleId   String
+  vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
+  scheduledAt DateTime
+  status      String   @default("CONFIRMED") // CONFIRMED | WAITLISTED | CANCELLED | COMPLETED | NO_SHOW
+  source      String   @default("ONLINE") // ONLINE | PHONE | WALK_IN
+  notes       String?
+  // Issued at booking time so the QR/link in the confirmation email keeps working
+  // through check-in -- carried over verbatim into QueueEntry.trackingToken.
+  trackingToken String? @unique
+  createdAt   DateTime @default(now())
+
+  serviceItems AppointmentServiceItem[]
+  queueEntry   QueueEntry?
+}
+
+model AppointmentServiceItem {
+  id            String             @id @default(cuid())
+  appointmentId String
+  appointment   Appointment        @relation(fields: [appointmentId], references: [id])
+  catalogItemId String
+  catalogItem   ServiceCatalogItem @relation(fields: [catalogItemId], references: [id])
+}
+
+// A vehicle physically present needing/getting a bay. Created either from a
+// checked-in Appointment or directly for a walk-in -- this is what resolves
+// the "online booking vs walk-in capacity" conflict from the proposal review:
+// both paths land here and are ordered by checkedInAt + priority.
+model QueueEntry {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id])
+  vehicleId     String
+  vehicle       Vehicle  @relation(fields: [vehicleId], references: [id])
+  appointmentId String?  @unique
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id])
+  bayId         String?
+  bay           Bay?     @relation(fields: [bayId], references: [id])
+  status        String   @default("WAITING") // WAITING | IN_SERVICE | QUALITY_CHECK | READY | COMPLETED | CANCELLED
+  priority      Int      @default(0)
+  createdVia    String   // APPOINTMENT | WALK_IN
+  trackingToken String   @unique
+  checkedInAt   DateTime @default(now())
+  startedAt     DateTime?
+  qcAt          DateTime?
+  completedAt   DateTime?
+
+  serviceJob   ServiceJob?
+  inspections  MaintenanceInspection[]
+  invoice      Invoice?
+}
+
+model ServiceJob {
+  id            String   @id @default(cuid())
+  queueEntryId  String   @unique
+  queueEntry    QueueEntry @relation(fields: [queueEntryId], references: [id])
+  technicianId  String?
+  technician    User?    @relation("Technician", fields: [technicianId], references: [id])
+  qcSignedById  String?
+  qcSignedBy    User?    @relation("QcSigner", fields: [qcSignedById], references: [id])
+  qcSignedAt    DateTime?
+  notes         String?
+
+  items ServiceJobItem[]
+}
+
+model ServiceJobItem {
+  id            String             @id @default(cuid())
+  serviceJobId  String
+  serviceJob    ServiceJob         @relation(fields: [serviceJobId], references: [id])
+  catalogItemId String
+  catalogItem   ServiceCatalogItem @relation(fields: [catalogItemId], references: [id])
+  name          String // snapshot at time of job, in case catalog changes later
+  price         Float
+  qty           Int    @default(1)
+}
+
+model MaintenanceInspection {
+  id              String   @id @default(cuid())
+  vehicleId       String
+  vehicle         Vehicle  @relation(fields: [vehicleId], references: [id])
+  queueEntryId    String?
+  queueEntry      QueueEntry? @relation(fields: [queueEntryId], references: [id])
+  technicianId    String
+  technician      User     @relation(fields: [technicianId], references: [id])
+  checklist       String   // JSON: [{ item, status, notes }]
+  dtcCodes        String   @default("[]") // JSON string[] -- manually entered by technician
+  mileage         Int?
+  findings        String?
+  nextServiceDueAt DateTime?
+  createdAt       DateTime @default(now())
+
+  photos VehiclePhoto[]
+}
+
+model Invoice {
+  id                  String   @id @default(cuid())
+  queueEntryId        String?  @unique
+  queueEntry          QueueEntry? @relation(fields: [queueEntryId], references: [id])
+  customerId          String
+  customer            Customer @relation(fields: [customerId], references: [id])
+  subtotal            Float
+  discountAmount      Float    @default(0)
+  loyaltyPointsUsed    Int      @default(0)
+  loyaltyValueApplied Float    @default(0)
+  tax                 Float    @default(0)
+  total               Float
+  status              String   @default("UNPAID") // UNPAID | PARTIALLY_PAID | PAID | REFUNDED
+  createdAt           DateTime @default(now())
+
+  items    InvoiceItem[]
+  payments Payment[]
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice @relation(fields: [invoiceId], references: [id])
+  description String
+  price       Float
+  qty         Int     @default(1)
+}
+
+model Payment {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  method      String   // CASH | MOMO | AIRTEL | CARD | LOYALTY
+  amount      Float
+  status      String   @default("SUCCESS") // PENDING | SUCCESS | FAILED | REFUNDED
+  providerRef String?
+  createdAt   DateTime @default(now())
+}
+
+model LoyaltyTransaction {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  points     Int
+  type       String   // EARN | REDEEM | ADJUST
+  reason     String
+  createdAt  DateTime @default(now())
+}
+
+model NotificationLog {
+  id         String   @id @default(cuid())
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  channel    String   // EMAIL | IN_APP
+  template   String
+  subject    String?
+  body       String
+  status     String   @default("SENT") // SENT | FAILED | QUEUED
+  meta       String? // JSON
+  createdAt  DateTime @default(now())
+}
+
+model Message {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  sender     String   // CUSTOMER | STAFF
+  staffId    String?
+  staff      User?    @relation("StaffSender", fields: [staffId], references: [id])
+  body       String
+  createdAt  DateTime @default(now())
+  readAt     DateTime?
+}
+
+model InventoryItem {
+  id              String   @id @default(cuid())
+  name            String
+  unit            String
+  category        String  // CHEMICAL | PART | CONSUMABLE
+  stockLevel      Float
+  reorderThreshold Float
+  costPerUnit     Float
+  expiryDate      DateTime?
+  createdAt       DateTime @default(now())
+
+  purchaseOrderItems PurchaseOrderItem[]
+}
+
+model Supplier {
+  id    String  @id @default(cuid())
+  name  String
+  email String?
+  phone String?
+
+  purchaseOrders PurchaseOrder[]
+}
+
+model PurchaseOrder {
+  id           String   @id @default(cuid())
+  supplierId   String
+  supplier     Supplier @relation(fields: [supplierId], references: [id])
+  status       String   @default("DRAFT") // DRAFT | SUBMITTED | APPROVED | RECEIVED | CANCELLED
+  createdById  String
+  createdBy    User     @relation("PoCreatedBy", fields: [createdById], references: [id])
+  approvedById String?
+  approvedBy   User?    @relation("PoApprovedBy", fields: [approvedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  items PurchaseOrderItem[]
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  qty             Float
+  unitCost        Float
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  String? // JSON
+  createdAt DateTime @default(now())
+}
+
+// Cached AI scoring output so dashboards don't recompute on every request.
+model CustomerInsight {
+  id                  String   @id @default(cuid())
+  customerId          String   @unique
+  customer            Customer @relation(fields: [customerId], references: [id])
+  churnRisk           Float // 0..1
+  churnRiskLabel       String // LOW | MEDIUM | HIGH
+  maintenanceDueScore Float // 0..1, highest across customer's vehicles
+  lastComputedAt      DateTime @default(now())
+}

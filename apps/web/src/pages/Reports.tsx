@@ -1,0 +1,86 @@
+import { useQuery } from "@tanstack/react-query";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { Download } from "lucide-react";
+import { api } from "../lib/api";
+
+interface Metrics {
+  revenueByDay: { date: string; total: number }[];
+  servicePopularity: { name: string; count: number }[];
+  peakHours: { hour: number; count: number }[];
+  staffProductivity: { email: string; count: number }[];
+  retention: { returning: number; oneTime: number; total: number };
+  totalRevenue: number;
+  vehiclesServiced: number;
+  avgServiceMinutes: number;
+}
+
+export function Reports() {
+  const { data } = useQuery({ queryKey: ["reports-dashboard"], queryFn: () => api.get<Metrics>("/reports/dashboard?days=30") });
+
+  if (!data) return <p className="text-ink-400">Loading...</p>;
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-end gap-2">
+        <a className="btn-secondary" href="/api/reports/export/excel" target="_blank" rel="noreferrer"><Download size={14} /> Excel</a>
+        <a className="btn-secondary" href="/api/reports/export/pdf" target="_blank" rel="noreferrer"><Download size={14} /> PDF</a>
+      </div>
+
+      <div className="card">
+        <h3 className="font-semibold text-ink-200 mb-3">Revenue trend (30 days)</h3>
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={data.revenueByDay}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e3e8ea" />
+            <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+            <YAxis tick={{ fontSize: 11 }} />
+            <Tooltip />
+            <Line type="monotone" dataKey="total" stroke="#13847a" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="card">
+          <h3 className="font-semibold text-ink-200 mb-3">Service popularity</h3>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={data.servicePopularity} layout="vertical" margin={{ left: 24 }}>
+              <XAxis type="number" tick={{ fontSize: 11 }} />
+              <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Bar dataKey="count" fill="#f59e0b" radius={4} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="card">
+          <h3 className="font-semibold text-ink-200 mb-3">Peak hours</h3>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={data.peakHours}>
+              <XAxis dataKey="hour" tick={{ fontSize: 11 }} tickFormatter={(h) => `${h}:00`} />
+              <YAxis tick={{ fontSize: 11 }} />
+              <Tooltip />
+              <Bar dataKey="count" fill="#1ea696" radius={4} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3 className="font-semibold text-ink-200 mb-3">Staff productivity</h3>
+        <table className="w-full text-sm">
+          <tbody className="divide-y divide-ink-800">
+            {data.staffProductivity.map((s) => (
+              <tr key={s.email}><td className="py-2">{s.email}</td><td className="py-2 text-right">{s.count} jobs</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4 text-center">
+        <div className="card"><div className="font-mono text-xl font-semibold text-ink-100 tabular-nums">{data.retention.returning}</div><div className="panel-title mt-1">Returning customers</div></div>
+        <div className="card"><div className="font-mono text-xl font-semibold text-ink-100 tabular-nums">{data.retention.oneTime}</div><div className="panel-title mt-1">One-time customers</div></div>
+        <div className="card"><div className="font-mono text-xl font-semibold text-ink-100 tabular-nums">{data.avgServiceMinutes}m</div><div className="panel-title mt-1">Avg. service time</div></div>
+      </div>
+    </div>
+  );
+}
