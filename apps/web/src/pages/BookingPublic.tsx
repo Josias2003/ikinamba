@@ -92,7 +92,7 @@ export function BookingPublic() {
 
         <div className="card space-y-3">
           <h3 className="font-semibold text-ink-200">2. Pick a date &amp; time</h3>
-          <input className="input max-w-xs" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <input className="input max-w-xs" type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(e) => setDate(e.target.value)} />
           <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
             {slots?.map((s) => (
               <button
@@ -118,7 +118,7 @@ export function BookingPublic() {
             <input className="input" placeholder="Vehicle make" value={vehicle.make} onChange={(e) => setVehicle({ ...vehicle, make: e.target.value })} />
             <input className="input" placeholder="Vehicle model" value={vehicle.model} onChange={(e) => setVehicle({ ...vehicle, model: e.target.value })} />
             <input className="input" placeholder="Plate number" value={vehicle.plate} onChange={(e) => setVehicle({ ...vehicle, plate: e.target.value })} />
-            <input className="input" type="number" placeholder="Year" value={vehicle.year} onChange={(e) => setVehicle({ ...vehicle, year: Number(e.target.value) })} />
+            <input className="input" type="number" placeholder="Year" min={1980} max={new Date().getFullYear() + 1} value={vehicle.year} onChange={(e) => setVehicle({ ...vehicle, year: Number(e.target.value) })} />
           </div>
         </div>
 

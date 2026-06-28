@@ -36,13 +36,13 @@ export function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-ink-950 px-4">
       <div className="w-full max-w-sm">
-        <div className="flex items-center gap-2 justify-center mb-6 text-white">
+        <Link to="/" className="flex items-center gap-2 justify-center mb-6 text-white hover:opacity-80 transition-opacity">
           <Car className="text-brand-400" size={32} />
           <div>
             <div className="font-bold text-2xl">New Class Car Wash</div>
             <div className="text-xs text-ink-400 text-center">IKINAMBA staff console</div>
           </div>
-        </div>
+        </Link>
 
         <form onSubmit={onSubmit} className="card space-y-4">
           <div>

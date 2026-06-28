@@ -249,8 +249,8 @@ export function Layout() {
             </span>
             <div className="h-6 w-px bg-ink-800 hidden sm:block" />
             <Link to="/profile" className="text-right hover:opacity-80 transition-opacity" title="Profile & security">
-              <div className="text-xs text-ink-300 leading-tight">{user.email}</div>
-              <div className="badge-live text-[10px]">{user.role}</div>
+              <div className="text-sm font-semibold text-ink-100 leading-tight">{user.email}</div>
+              <div className="text-[10px] text-ink-500 font-mono uppercase tracking-wide">{user.role}</div>
             </Link>
           </div>
         </header>

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { LogIn, Search } from "lucide-react";
+import { LogIn, Search, Loader2 } from "lucide-react";
 import { api } from "../lib/api";
 import { Modal } from "../components/Modal";
 import { TrackingQrCard } from "../components/TrackingQrCard";
@@ -26,6 +26,7 @@ export function Appointments() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<SortState<SortField>>({ field: null, direction: "asc" });
   const [qrToken, setQrToken] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<Appt | null>(null);
   const qc = useQueryClient();
 
   const { data: appointments, isLoading } = useQuery({
@@ -51,7 +52,10 @@ export function Appointments() {
     mutationFn: (id: string) => api.post<QueueEntry>(`/appointments/${id}/check-in`),
     onSuccess: (entry) => { refresh(); setQrToken(entry.trackingToken); },
   });
-  const cancel = useMutation({ mutationFn: (id: string) => api.patch(`/appointments/${id}/cancel`), onSuccess: refresh });
+  const cancel = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.patch(`/appointments/${id}/cancel`, { reason }),
+    onSuccess: () => { refresh(); setCancelTarget(null); },
+  });
 
   return (
     <div className="space-y-5">
@@ -67,6 +71,15 @@ export function Appointments() {
         <Modal title="Customer tracking QR" onClose={() => setQrToken(null)}>
           <TrackingQrCard token={qrToken} caption="Show this to the customer or print it for their receipt." />
         </Modal>
+      )}
+
+      {cancelTarget && (
+        <CancelReasonModal
+          appt={cancelTarget}
+          pending={cancel.isPending}
+          onClose={() => setCancelTarget(null)}
+          onConfirm={(reason) => cancel.mutate({ id: cancelTarget.id, reason })}
+        />
       )}
 
       <div className="card !p-0 overflow-hidden">
@@ -100,7 +113,7 @@ export function Appointments() {
                   {canOperate && a.status === "CONFIRMED" && (
                     <div className="flex gap-2">
                       <button className="btn-primary text-xs" onClick={() => checkIn.mutate(a.id)}><LogIn size={13} /> Check in</button>
-                      <button className="btn-secondary text-xs" onClick={() => cancel.mutate(a.id)}>Cancel</button>
+                      <button className="btn-secondary text-xs" onClick={() => setCancelTarget(a)}>Cancel</button>
                     </div>
                   )}
                 </td>
@@ -113,5 +126,50 @@ export function Appointments() {
         </table>
       </div>
     </div>
+  );
+}
+
+function CancelReasonModal({
+  appt,
+  pending,
+  onClose,
+  onConfirm,
+}: {
+  appt: Appt;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  return (
+    <Modal title="Cancel appointment" onClose={onClose}>
+      <form
+        className="space-y-3"
+        onSubmit={(e) => { e.preventDefault(); onConfirm(reason); }}
+      >
+        <p className="text-sm text-ink-400">
+          Cancelling {appt.customer.name}'s appointment for {appt.vehicle.make} {appt.vehicle.model} ({appt.vehicle.plate}).
+          The customer will be emailed this reason.
+        </p>
+        <div>
+          <label className="label">Reason</label>
+          <textarea
+            className="input"
+            rows={3}
+            required
+            autoFocus
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. Bay unavailable due to equipment maintenance"
+          />
+        </div>
+        <div className="flex gap-2">
+          <button className="btn-danger flex-1" type="submit" disabled={!reason.trim() || pending}>
+            {pending && <Loader2 size={14} className="animate-spin" />} Confirm cancellation
+          </button>
+          <button className="btn-secondary" type="button" onClick={onClose}>Back</button>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -18,7 +18,7 @@ const inspectionSchema = z.object({
   queueEntryId: z.string().optional(),
   checklist: z.array(checklistItemSchema),
   dtcCodes: z.array(z.string()).default([]), // manually entered by technician, no scanner integration
-  mileage: z.number().int().optional(),
+  mileage: z.number().int().min(0).optional(),
   findings: z.string().optional(),
   nextServiceDueAt: z.string().optional(),
 });

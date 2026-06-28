@@ -52,7 +52,9 @@ export async function createPublicBooking(input: PublicBookingInput) {
   const { subject, html } = templates.appointmentConfirmation(
     appointment.customer.name,
     input.scheduledAt.toLocaleString(),
-    trackingUrl(appointment.trackingToken!)
+    trackingUrl(appointment.trackingToken!),
+    appointment.vehicle,
+    appointment.serviceItems.map((si) => ({ name: si.catalogItem.name, price: si.catalogItem.basePrice }))
   );
   await notifyCustomer({
     customerId,
@@ -91,9 +93,13 @@ export async function getAvailability(date: Date) {
   const dayEnd = new Date(date);
   dayEnd.setHours(18, 0, 0, 0);
 
+  const now = new Date();
   const slots: { start: string; bookedCount: number; available: boolean }[] = [];
   for (let t = dayStart.getTime(); t < dayEnd.getTime(); t += SLOT_MINUTES * 60_000) {
     const slotStart = new Date(t);
+    // Skip slots that have already started -- a same-day booking shouldn't be able to
+    // pick a time earlier than right now just because the bay capacity is still free.
+    if (slotStart < now) continue;
     const slotEnd = new Date(t + SLOT_MINUTES * 60_000);
     const bookedCount = await prisma.appointment.count({
       where: { status: "CONFIRMED", scheduledAt: { gte: slotStart, lt: slotEnd } },
@@ -104,6 +110,9 @@ export async function getAvailability(date: Date) {
 }
 
 export async function assertSlotAvailable(scheduledAt: Date, excludeAppointmentId?: string) {
+  if (scheduledAt.getTime() < Date.now()) {
+    throw badRequest("Cannot book or reschedule to a time in the past.");
+  }
   const capacity = await checkSlotCapacity(scheduledAt, excludeAppointmentId);
   if (!capacity.available) {
     throw conflict("That time slot is fully booked. Please choose another time or join the waitlist.");

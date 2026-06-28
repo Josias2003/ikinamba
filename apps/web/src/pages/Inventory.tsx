@@ -184,9 +184,9 @@ function NewItemForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: (b:
           <option value="CHEMICAL">Chemical</option><option value="PART">Part</option><option value="CONSUMABLE">Consumable</option>
         </select>
       </div>
-      <div><label className="label">Stock level</label><input className="input" type="number" value={form.stockLevel} onChange={(e) => setForm({ ...form, stockLevel: Number(e.target.value) })} /></div>
-      <div><label className="label">Reorder threshold</label><input className="input" type="number" value={form.reorderThreshold} onChange={(e) => setForm({ ...form, reorderThreshold: Number(e.target.value) })} /></div>
-      <div><label className="label">Cost/unit (RWF)</label><input className="input" type="number" value={form.costPerUnit} onChange={(e) => setForm({ ...form, costPerUnit: Number(e.target.value) })} /></div>
+      <div><label className="label">Stock level</label><input className="input" type="number" min={0} value={form.stockLevel} onChange={(e) => setForm({ ...form, stockLevel: Number(e.target.value) })} /></div>
+      <div><label className="label">Reorder threshold</label><input className="input" type="number" min={0} value={form.reorderThreshold} onChange={(e) => setForm({ ...form, reorderThreshold: Number(e.target.value) })} /></div>
+      <div><label className="label">Cost/unit (RWF)</label><input className="input" type="number" min={0} value={form.costPerUnit} onChange={(e) => setForm({ ...form, costPerUnit: Number(e.target.value) })} /></div>
       <div className="col-span-3 flex gap-2"><button className="btn-primary" type="submit">Save</button><button className="btn-secondary" type="button" onClick={onClose}>Cancel</button></div>
     </form>
   );

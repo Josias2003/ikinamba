@@ -7,7 +7,7 @@ import { DateRangePicker, defaultDateRange, type DateRangeValue } from "../compo
 
 interface CashierReport { since: string; until: string; invoicesCreated: number; totalCollected: number; paymentsByMethod: { method: string; amount: number }[] }
 interface ReceptionistReport { since: string; until: string; appointmentCheckIns: number; walkInCheckIns: number }
-interface TechnicianReport { since: string; until: string; jobsAssigned: number; jobsCompleted: number; avgServiceMinutes: number; qcSignOffs: number }
+interface TechnicianReport { since: string; until: string; jobsAssigned: number; jobsCompleted: number; avgServiceMinutes: number; qcSignOffs: number; revenueGenerated: number }
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
@@ -81,11 +81,12 @@ export function MyReport() {
     return (
       <div className="space-y-6">
         {header}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <MetricCard label="Jobs assigned" value={String(r.jobsAssigned)} />
           <MetricCard label="Jobs completed" value={String(r.jobsCompleted)} />
           <MetricCard label="Avg. service time" value={`${r.avgServiceMinutes}m`} />
           <MetricCard label="QC sign-offs" value={String(r.qcSignOffs)} />
+          <MetricCard label="Revenue generated" value={`RWF ${Math.round(r.revenueGenerated).toLocaleString()}`} />
         </div>
       </div>
     );

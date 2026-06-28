@@ -158,7 +158,7 @@ function InspectionForm({ vehicleId, onDone }: { vehicleId: string; onDone: () =
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div><label className="label">DTC codes (comma separated, manually read off scanner)</label><input className="input" value={dtcCodes} onChange={(e) => setDtcCodes(e.target.value)} /></div>
-        <div><label className="label">Mileage (km)</label><input className="input" type="number" value={mileage} onChange={(e) => setMileage(e.target.value ? Number(e.target.value) : "")} /></div>
+        <div><label className="label">Mileage (km)</label><input className="input" type="number" min={0} value={mileage} onChange={(e) => setMileage(e.target.value ? Number(e.target.value) : "")} /></div>
       </div>
       <div><label className="label">Findings / notes</label><textarea className="input" value={findings} onChange={(e) => setFindings(e.target.value)} /></div>
       <div>

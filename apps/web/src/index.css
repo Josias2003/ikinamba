@@ -54,9 +54,13 @@
   --ink-100: 22 28 31;
   --ink-200: 37 46 51;
   --ink-300: 57 69 76;
-  --ink-400: 68 83 92;
-  --ink-500: 86 104 115;
-  --ink-600: 113 130 139;
+  /* Darkened further than a literal ramp-inversion would give -- at the original values
+     (68/86/113) these read as low-contrast/washed-out against the light card background
+     (text-ink-600 in particular landed under 2:1 contrast), even though the same numbers
+     work fine in dark mode against a near-black background. */
+  --ink-400: 30 38 42;
+  --ink-500: 45 56 62;
+  --ink-600: 62 76 84;
   --ink-700: 154 167 174;
   --ink-800: 195 204 209;
   --ink-900: 227 232 234;

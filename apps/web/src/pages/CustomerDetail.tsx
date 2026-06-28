@@ -113,7 +113,7 @@ function VehicleForm({ onClose, onSubmit }: { onClose: () => void; onSubmit: (b:
     >
       <div><label className="label">Make</label><input className="input" required value={form.make} onChange={(e) => setForm({ ...form, make: e.target.value })} /></div>
       <div><label className="label">Model</label><input className="input" required value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} /></div>
-      <div><label className="label">Year</label><input className="input" type="number" required value={form.year} onChange={(e) => setForm({ ...form, year: Number(e.target.value) })} /></div>
+      <div><label className="label">Year</label><input className="input" type="number" min={1980} max={new Date().getFullYear() + 1} required value={form.year} onChange={(e) => setForm({ ...form, year: Number(e.target.value) })} /></div>
       <div><label className="label">Plate</label><input className="input" required value={form.plate} onChange={(e) => setForm({ ...form, plate: e.target.value })} /></div>
       <div className="flex gap-2">
         <button className="btn-primary" type="submit">Add</button>

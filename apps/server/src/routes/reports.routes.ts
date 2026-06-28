@@ -5,6 +5,7 @@ import PDFDocument from "pdfkit";
 import { authenticate, requireRole } from "../middleware/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { badRequest } from "../lib/errors.js";
+import { pdfHeader, pdfSectionTitle, pdfTable, pdfMetricRow, pdfFooter } from "../lib/pdf.js";
 import {
   getDashboardMetrics,
   getCustomerRetention,
@@ -73,29 +74,53 @@ reportsRouter.get(
   })
 );
 
+const ROLE_REPORT_TITLE: Record<string, string> = {
+  CASHIER: "Cashier Activity Report",
+  RECEPTIONIST: "Receptionist Activity Report",
+  TECHNICIAN: "Technician Activity Report",
+};
+
 reportsRouter.get(
   "/my/export/pdf",
   requireRole("CASHIER", "RECEPTIONIST", "TECHNICIAN"),
   asyncHandler(async (req, res) => {
-    const report: any = await myReportFor(req.user!.role, req.user!.sub, resolveRange(req));
+    const role = req.user!.role;
+    const report: any = await myReportFor(role, req.user!.sub, resolveRange(req));
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", "attachment; filename=my-report.pdf");
 
     const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
-    doc.fontSize(20).text("My Report", { align: "center" });
-    doc.fontSize(11).text(`${report.since} to ${report.until}`, { align: "center" });
-    doc.moveDown();
-    doc.fontSize(12);
-    Object.entries(report).forEach(([key, value]) => {
-      if (key === "since" || key === "until") return;
-      if (Array.isArray(value)) {
-        doc.text(`${key}:`);
-        value.forEach((row: Record<string, unknown>) => doc.text(`  - ${Object.values(row).join(": ")}`));
-      } else {
-        doc.text(`${key}: ${value}`);
-      }
-    });
+    pdfHeader(doc, ROLE_REPORT_TITLE[role] ?? "My Report", `${report.since} to ${report.until}`);
+
+    if (role === "CASHIER") {
+      pdfMetricRow(doc, [
+        { label: "Invoices created", value: String(report.invoicesCreated) },
+        { label: "Total collected", value: `RWF ${Math.round(report.totalCollected).toLocaleString()}` },
+      ]);
+      pdfSectionTitle(doc, "Payments by method");
+      pdfTable(
+        doc,
+        ["Method", "Amount (RWF)"],
+        report.paymentsByMethod.map((m: any) => [m.method, Math.round(m.amount).toLocaleString()])
+      );
+    } else if (role === "RECEPTIONIST") {
+      pdfMetricRow(doc, [
+        { label: "Appointment check-ins", value: String(report.appointmentCheckIns) },
+        { label: "Walk-ins checked in", value: String(report.walkInCheckIns) },
+      ]);
+    } else if (role === "TECHNICIAN") {
+      pdfMetricRow(doc, [
+        { label: "Jobs assigned", value: String(report.jobsAssigned) },
+        { label: "Jobs completed", value: String(report.jobsCompleted) },
+        { label: "Avg. service time", value: `${report.avgServiceMinutes}m` },
+        { label: "QC sign-offs", value: String(report.qcSignOffs) },
+      ]);
+      pdfSectionTitle(doc, "Revenue generated");
+      doc.fontSize(11).text(`RWF ${Math.round(report.revenueGenerated).toLocaleString()} from completed jobs in this range.`);
+    }
+
+    pdfFooter(doc);
     doc.end();
   })
 );
@@ -140,30 +165,36 @@ reportsRouter.get(
   "/export/pdf",
   requireRole("ADMIN", "MANAGER"),
   asyncHandler(async (req, res) => {
-    const metrics = await getDashboardMetrics(resolveRange(req));
+    const range = resolveRange(req);
+    const metrics = await getDashboardMetrics(range);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", "attachment; filename=ikinamba-report.pdf");
 
     const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
+    pdfHeader(doc, "Operations Report", `${range.since.toLocaleDateString()} to ${range.until.toLocaleDateString()}`);
 
-    doc.fontSize(20).text("IKINAMBA Operations Report", { align: "center" });
-    doc.moveDown();
-    doc.fontSize(12).text(`Generated: ${new Date().toLocaleString()}`);
-    doc.text(`Vehicles serviced: ${metrics.vehiclesServiced}`);
-    doc.text(`Total revenue: RWF ${metrics.totalRevenue.toLocaleString()}`);
-    doc.text(`Average service duration: ${metrics.avgServiceMinutes} minutes`);
-    doc.moveDown();
+    pdfMetricRow(doc, [
+      { label: "Vehicles serviced", value: String(metrics.vehiclesServiced) },
+      { label: "Total revenue", value: `RWF ${Math.round(metrics.totalRevenue).toLocaleString()}` },
+      { label: "Avg. service time", value: `${metrics.avgServiceMinutes}m` },
+    ]);
 
-    doc.fontSize(14).text("Service Popularity");
-    doc.fontSize(11);
-    metrics.servicePopularity.forEach((s) => doc.text(`- ${s.name}: ${s.count}`));
-    doc.moveDown();
+    pdfSectionTitle(doc, "Service popularity");
+    pdfTable(
+      doc,
+      ["Service", "Times performed"],
+      metrics.servicePopularity.map((s) => [s.name, s.count])
+    );
 
-    doc.fontSize(14).text("Staff Productivity");
-    doc.fontSize(11);
-    metrics.staffProductivity.forEach((s) => doc.text(`- ${s.email}: ${s.count} jobs`));
+    pdfSectionTitle(doc, "Staff productivity");
+    pdfTable(
+      doc,
+      ["Staff email", "Jobs completed"],
+      metrics.staffProductivity.map((s) => [s.email, s.count])
+    );
 
+    pdfFooter(doc);
     doc.end();
   })
 );

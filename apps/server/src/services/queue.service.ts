@@ -1,7 +1,7 @@
 import { prisma } from "../lib/prisma.js";
 import { badRequest, conflict, notFound } from "../lib/errors.js";
 import { emitQueueBoardUpdate, emitTrackingUpdate } from "../lib/socket.js";
-import { notifyCustomer, templates } from "./notifications.service.js";
+import { notifyCustomer, notifyTechnician, templates } from "./notifications.service.js";
 import { newTrackingToken, trackingUrl, qrAttachment } from "../lib/tracking.js";
 
 const LOYALTY_PRIORITY: Record<string, number> = { GOLD: 2, SILVER: 1, BRONZE: 0 };
@@ -43,7 +43,7 @@ export async function checkIn(opts: { customerId: string; vehicleId: string; app
   });
 
   const full = await fullQueueEntry(entry.id);
-  const { subject, html } = templates.checkedIn(full.customer.name, full.vehicle.plate, trackingUrl(trackingToken));
+  const { subject, html } = templates.checkedIn(full.customer.name, full.vehicle, trackingUrl(trackingToken));
   await notifyCustomer({
     customerId: full.customerId,
     template: "CHECKED_IN",
@@ -98,7 +98,7 @@ export async function assignNextToBay(bayId: string) {
   ]);
 
   const entry = await fullQueueEntry(next.id);
-  const { subject, html } = templates.serviceStarted(entry.customer.name, entry.vehicle.plate);
+  const { subject, html } = templates.serviceStarted(entry.customer.name, entry.vehicle, entry.serviceJob?.items ?? []);
   await notifyCustomer({ customerId: entry.customerId, template: "SERVICE_STARTED", subject, html });
 
   emitQueueBoardUpdate();
@@ -111,6 +111,7 @@ export async function setTechnician(queueEntryId: string, technicianId: string) 
   if (!entry?.serviceJob) throw notFound("Service job not found for this queue entry");
   await prisma.serviceJob.update({ where: { id: entry.serviceJob.id }, data: { technicianId } });
   emitQueueBoardUpdate();
+  await notifyTechnician(technicianId, queueEntryId);
 }
 
 export async function addServiceItems(queueEntryId: string, catalogItemIds: string[]) {
@@ -158,7 +159,7 @@ export async function signQualityCheck(queueEntryId: string, signedById: string)
   ]);
 
   const full = await fullQueueEntry(queueEntryId);
-  const { subject, html } = templates.serviceReady(full.customer.name, full.vehicle.plate);
+  const { subject, html } = templates.serviceReady(full.customer.name, full.vehicle);
   await notifyCustomer({ customerId: full.customerId, template: "SERVICE_READY", subject, html });
 
   emitQueueBoardUpdate();

@@ -120,6 +120,7 @@ model Appointment {
   status      String   @default("CONFIRMED") // CONFIRMED | WAITLISTED | CANCELLED | COMPLETED | NO_SHOW
   source      String   @default("ONLINE") // ONLINE | PHONE | WALK_IN
   notes       String?  @db.Text
+  cancellationReason String? @db.Text
   // Issued at booking time so the QR/link in the confirmation email keeps working
   // through check-in -- carried over verbatim into QueueEntry.trackingToken.
   trackingToken String? @unique

@@ -102,7 +102,7 @@ export function InvoiceDetail() {
               <option value="AIRTEL">Airtel Money</option>
               <option value="CARD">Card</option>
             </select>
-            <input className="input" type="number" placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : "")} />
+            <input className="input" type="number" min={0.01} step="0.01" placeholder="Amount" value={amount} onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : "")} />
             <button className="btn-primary" disabled={!amount || pay.isPending} onClick={() => pay.mutate()}>Pay</button>
           </div>
         )}

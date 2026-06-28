@@ -52,7 +52,7 @@ export async function createInvoiceForQueueEntry(
 }
 
 export async function recordPayment(invoiceId: string, method: string, amount: number, phoneNumber?: string) {
-  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true, customer: true } });
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true, customer: true, items: true } });
   if (!invoice) throw notFound("Invoice not found");
 
   const paidSoFar = invoice.payments.filter((p) => p.status === "SUCCESS").reduce((s, p) => s + p.amount, 0);
@@ -83,7 +83,11 @@ export async function recordPayment(invoiceId: string, method: string, amount: n
       }),
     ]);
 
-    const { subject, html } = templates.paymentReceipt(invoice.customer.name, invoice.total);
+    const { subject, html } = templates.paymentReceipt(
+      invoice.customer.name,
+      invoice.total,
+      invoice.items.map((i) => ({ name: i.description, price: i.price }))
+    );
     await notifyCustomer({ customerId: invoice.customerId, template: "PAYMENT_RECEIPT", subject, html });
   }
 

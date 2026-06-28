@@ -134,6 +134,18 @@ export async function getTechnicianReport(userId: string, { since, until }: Date
     ? completed.reduce((sum, j) => sum + (j.queueEntry.completedAt!.getTime() - j.queueEntry.startedAt!.getTime()) / 60_000, 0) / completed.length
     : 0;
 
+  // "How much did this technician bring in" -- the revenue tied to the invoices generated
+  // from jobs they worked on, same attribution chain (ServiceJob -> QueueEntry -> Invoice)
+  // used for jobsCompleted above, just one hop further.
+  const queueEntryIds = jobs.map((j) => j.queueEntryId);
+  const invoices = queueEntryIds.length
+    ? await prisma.invoice.findMany({
+        where: { queueEntryId: { in: queueEntryIds }, status: { in: ["PAID", "PARTIALLY_PAID"] } },
+        select: { total: true },
+      })
+    : [];
+  const revenueGenerated = invoices.reduce((sum, inv) => sum + inv.total, 0);
+
   return {
     since: since.toISOString().slice(0, 10),
     until: until.toISOString().slice(0, 10),
@@ -141,5 +153,6 @@ export async function getTechnicianReport(userId: string, { since, until }: Date
     jobsCompleted: completed.length,
     avgServiceMinutes: Math.round(avgServiceMinutes),
     qcSignOffs: qcSigned,
+    revenueGenerated,
   };
 }

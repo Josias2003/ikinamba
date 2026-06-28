@@ -8,6 +8,7 @@ import { notFound } from "../lib/errors.js";
 import { assertSlotAvailable, getAvailability, createPublicBooking } from "../services/appointments.service.js";
 import { checkIn } from "../services/queue.service.js";
 import { recordAudit } from "../lib/audit.js";
+import { notifyCustomer, templates } from "../services/notifications.service.js";
 
 export const appointmentsRouter = Router();
 
@@ -80,8 +81,22 @@ appointmentsRouter.patch(
   "/:id/cancel",
   authenticate,
   requireRole("RECEPTIONIST"),
+  validateBody(z.object({ reason: z.string().min(1) })),
   asyncHandler(async (req, res) => {
-    const appt = await prisma.appointment.update({ where: { id: req.params.id }, data: { status: "CANCELLED" } });
+    const appt = await prisma.appointment.update({
+      where: { id: req.params.id },
+      data: { status: "CANCELLED", cancellationReason: req.body.reason },
+      include: { customer: true, vehicle: true },
+    });
+
+    const { subject, html } = templates.appointmentCancelled(
+      appt.customer.name,
+      appt.scheduledAt.toLocaleString(),
+      appt.vehicle,
+      req.body.reason
+    );
+    await notifyCustomer({ customerId: appt.customerId, template: "APPOINTMENT_CANCELLED", subject, html });
+
     res.json(appt);
   })
 );

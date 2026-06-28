@@ -110,6 +110,37 @@ This starts both the backend and frontend together. Open:
 
 `http://localhost:5173`
 
+### Step 9: (For a live demo) Make tracking QR codes scannable by phone
+
+Every tracking QR code -- both the one emailed to a customer and the one shown on screen
+-- encodes a link built from `CLIENT_ORIGIN` in `apps/server/.env`. By default that's
+`http://localhost:5173`, which only resolves on the laptop itself -- a phone camera can't
+reach it. To make QR codes scannable from any phone on the same WiFi as your laptop:
+
+1. Find your laptop's LAN IP:
+
+   ```powershell
+   ipconfig
+   ```
+
+   Look for the `IPv4 Address` under your active WiFi adapter (e.g. `192.168.1.42`).
+
+2. In `apps/server/.env`, set:
+
+   ```env
+   CLIENT_ORIGIN="http://192.168.1.42:5173"
+   ```
+
+   (using your real IP, not the example above)
+
+3. Restart the backend (`npm run dev` again, or just `npm run dev:server`).
+4. On your phone (connected to the same WiFi), open `http://192.168.1.42:5173` once to
+   confirm it loads, then scan any tracking QR generated after the restart.
+
+Vite's dev server is already configured (`apps/web/vite.config.ts`) to listen on all
+network interfaces, not just localhost, so no other setup is needed. Switch
+`CLIENT_ORIGIN` back to `http://localhost:5173` afterward for normal local development.
+
 ## 3. Demo Test Accounts
 
 Use password:

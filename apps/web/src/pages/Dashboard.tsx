@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Car, ArrowUpRight, Receipt } from "lucide-react";
+import { Car, ArrowUpRight, Receipt, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { NAV_GROUPS } from "../components/Layout";
 import { api } from "../lib/api";
@@ -155,6 +155,11 @@ export function Dashboard() {
     (item) => item.to !== "/" && user && item.roles.includes(user.role)
   );
 
+  const occupiedBays = board?.bays.filter((b) => b.status === "OCCUPIED").length ?? 0;
+  const allEntries = board?.bays.flatMap((b) => b.queueEntries) ?? [];
+  const inServiceCount = allEntries.filter((e) => e.status === "IN_SERVICE").length;
+  const inQcCount = allEntries.filter((e) => e.status === "QUALITY_CHECK").length;
+
   return (
     <div className="space-y-6">
       {(canSeeReports || canSeeBillable) && (
@@ -171,8 +176,19 @@ export function Dashboard() {
         </div>
       )}
 
-      {canSeeQueue && (
+      {canSeeQueue && board && (
         <>
+          {/* "What is happening right now" at a glance -- the financial metrics row above
+              is gated to MANAGER/ADMIN's oversight numbers; the day-to-day floor roles
+              (RECEPTIONIST/TECHNICIAN) saw nothing here at all before this, just bay tiles
+              with no summary, which read as an empty page rather than a working dashboard. */}
+          <div className="card p-0 flex flex-wrap divide-x divide-ink-800">
+            <MetricCell label="Bays occupied" value={`${occupiedBays}/${board.bays.length}`} />
+            <MetricCell label="Vehicles waiting" value={String(board.waiting.length)} />
+            <MetricCell label="In service" value={String(inServiceCount)} />
+            <MetricCell label="In quality check" value={String(inQcCount)} />
+          </div>
+
           <div className="flex items-center justify-between">
             <span className="panel-title">Bay floor &middot; live</span>
             <Link to="/queue" className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1">
@@ -180,27 +196,32 @@ export function Dashboard() {
             </Link>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {board?.bays.map((bay) => <BayTile key={bay.id} bay={bay} now={now} />)}
+            {board.bays.map((bay) => <BayTile key={bay.id} bay={bay} now={now} />)}
           </div>
-          {board && !board.bays.length && <p className="text-ink-500 text-sm">No bays configured yet.</p>}
+          {!board.bays.length && <p className="text-ink-500 text-sm">No bays configured yet.</p>}
 
-          <div className="card">
-            <div className="flex items-center justify-between mb-3">
-              <span className="panel-title">Waiting</span>
-              <span className="font-mono text-xs text-ink-500">{board?.waiting.length ?? 0} in queue</span>
+          {board.waiting.length === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-ink-400 border border-ink-800 rounded-sm px-3 py-2">
+              <CheckCircle2 size={14} className="text-brand-400" /> No vehicles waiting.
             </div>
-            <div className="space-y-1.5">
-              {board?.waiting.slice(0, 6).map((e, i) => (
-                <div key={e.id} className="flex items-center gap-3 text-sm border border-ink-800 rounded-sm px-3 py-2">
-                  <span className="font-mono text-ink-600 w-5">{String(i + 1).padStart(2, "0")}</span>
-                  <span className="flex-1 text-ink-200">{e.vehicle.make} {e.vehicle.model} &middot; {e.vehicle.plate}</span>
-                  <span className="text-ink-500 text-xs">{e.customer.name}</span>
-                  <span className="font-mono text-xs text-ink-500">{elapsedSince(e.checkedInAt, now)}</span>
-                </div>
-              ))}
-              {!board?.waiting.length && <p className="text-ink-500 text-sm">No vehicles waiting.</p>}
+          ) : (
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <span className="panel-title">Waiting</span>
+                <span className="font-mono text-xs text-ink-500">{board.waiting.length} in queue</span>
+              </div>
+              <div className="space-y-1.5">
+                {board.waiting.slice(0, 6).map((e, i) => (
+                  <div key={e.id} className="flex items-center gap-3 text-sm border border-ink-800 rounded-sm px-3 py-2">
+                    <span className="font-mono text-ink-600 w-5">{String(i + 1).padStart(2, "0")}</span>
+                    <span className="flex-1 text-ink-200">{e.vehicle.make} {e.vehicle.model} &middot; {e.vehicle.plate}</span>
+                    <span className="text-ink-500 text-xs">{e.customer.name}</span>
+                    <span className="font-mono text-xs text-ink-500">{elapsedSince(e.checkedInAt, now)}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </>
       )}
 
@@ -218,15 +239,27 @@ export function Dashboard() {
         <div>
           <span className="panel-title">Quick access</span>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-2">
-            {quickAccess.map(({ to, label, icon: Icon }) => (
-              <Link key={to} to={to} className="card flex items-center justify-between hover:border-brand-500/40 transition-colors">
-                <div className="flex items-center gap-3">
-                  <Icon size={18} className="text-brand-400" />
-                  <span className="text-sm font-medium text-ink-100">{label}</span>
-                </div>
-                <ArrowUpRight size={16} className="text-ink-500" />
-              </Link>
-            ))}
+            {quickAccess.map(({ to, label, icon: Icon }, i) => {
+              // The role's primary day-to-day page (first in NAV_GROUPS order) gets visual
+              // weight instead of every card competing equally for attention -- the rest
+              // stay as plain secondary shortcuts.
+              const primary = i === 0;
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={`card flex items-center justify-between hover:border-brand-500/40 transition-colors ${
+                    primary ? "sm:col-span-2 lg:col-span-1 border-brand-500/40 bg-brand-500/5 py-6" : ""
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon size={primary ? 22 : 18} className="text-brand-400" />
+                    <span className={primary ? "text-base font-semibold text-ink-100" : "text-sm font-medium text-ink-100"}>{label}</span>
+                  </div>
+                  <ArrowUpRight size={primary ? 18 : 16} className="text-ink-500" />
+                </Link>
+              );
+            })}
           </div>
         </div>
       )}

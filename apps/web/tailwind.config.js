@@ -47,7 +47,9 @@ export default {
         "glow-red": "0 0 0 1px rgba(239,68,68,0.4), 0 0 22px -4px rgba(239,68,68,0.6)",
       },
       backgroundImage: {
-        grid: "linear-gradient(rgb(var(--grid-line) / 0.035) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--grid-line) / 0.035) 1px, transparent 1px)",
+        // Cut roughly in half from the original 0.035 -- at full strength it read as
+        // visual noise competing with content after extended use, not just a subtle texture.
+        grid: "linear-gradient(rgb(var(--grid-line) / 0.018) 1px, transparent 1px), linear-gradient(90deg, rgb(var(--grid-line) / 0.018) 1px, transparent 1px)",
       },
     },
   },

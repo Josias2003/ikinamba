@@ -9,11 +9,11 @@ export async function sendAppointmentReminders() {
 
   const appointments = await prisma.appointment.findMany({
     where: { status: "CONFIRMED", scheduledAt: { gte: windowStart, lte: windowEnd } },
-    include: { customer: true },
+    include: { customer: true, vehicle: true },
   });
 
   for (const appt of appointments) {
-    const { subject, html } = templates.appointmentReminder(appt.customer.name, appt.scheduledAt.toLocaleString());
+    const { subject, html } = templates.appointmentReminder(appt.customer.name, appt.scheduledAt.toLocaleString(), appt.vehicle);
     await notifyCustomer({ customerId: appt.customerId, template: "APPOINTMENT_REMINDER", subject, html });
   }
 
