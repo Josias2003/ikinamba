@@ -192,7 +192,7 @@ you'll watch it update live in step A6.
    - Email: `bikomeye9@gmail.com`
    - Password: `Passw0rd!`
 3. Click `Log in`
-4. Open `Appointments`
+4. Open `Bookings`
 
 #### A3. Check in the appointment
 
