@@ -9,6 +9,7 @@ import { assertSlotAvailable, getAvailability, createPublicBooking } from "../se
 import { checkIn } from "../services/queue.service.js";
 import { recordAudit } from "../lib/audit.js";
 import { notifyCustomer, templates } from "../services/notifications.service.js";
+import { createInvoiceForAppointment, recordPayment } from "../services/billing.service.js";
 
 export const appointmentsRouter = Router();
 
@@ -43,6 +44,19 @@ appointmentsRouter.post(
     await assertSlotAvailable(scheduledAt);
     const appointment = await createPublicBooking({ ...req.body, scheduledAt });
     res.status(201).json(appointment);
+  })
+);
+
+// Optional "Pay with MoMo now" after booking -- public, same no-auth model as booking
+// itself. Never blocks the booking that already happened: a failed/declined charge here
+// just means the customer pays at pickup as usual, exactly like before this existed.
+appointmentsRouter.post(
+  "/:id/pay",
+  validateBody(z.object({ phoneNumber: z.string().min(5) })),
+  asyncHandler(async (req, res) => {
+    const invoice = await createInvoiceForAppointment(req.params.id);
+    const result = await recordPayment(invoice.id, "MOMO", invoice.total, req.body.phoneNumber);
+    res.status(result.payment.status === "SUCCESS" ? 201 : 402).json(result);
   })
 );
 

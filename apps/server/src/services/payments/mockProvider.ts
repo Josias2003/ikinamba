@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import type { PaymentProvider, PaymentRequest, PaymentResult } from "./PaymentProvider.js";
+import { realMomoProvider, isMomoConfigured } from "./momoProvider.js";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -33,7 +34,10 @@ export const cashProvider: PaymentProvider = {
 export function providerFor(method: string): PaymentProvider {
   switch (method) {
     case "MOMO":
-      return momoProvider;
+      // Real MTN MoMo Collections once all four MOMO_* env vars are set (see
+      // docs/MOMO_SETUP_GUIDE.md); falls back to the simulated provider otherwise so the
+      // app still runs for anyone who hasn't set up sandbox credentials yet.
+      return isMomoConfigured() ? realMomoProvider : momoProvider;
     case "AIRTEL":
       return airtelProvider;
     case "CARD":

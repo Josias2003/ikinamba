@@ -1,12 +1,61 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Car, CheckCircle2, Loader2 } from "lucide-react";
-import { api } from "../lib/api";
+import { Car, CheckCircle2, Loader2, Smartphone } from "lucide-react";
+import { api, ApiError } from "../lib/api";
 import { ChatWidget } from "../components/ChatWidget";
 import { TrackingQrCard } from "../components/TrackingQrCard";
 
 interface CatalogItem { id: string; name: string; category: string; basePrice: number; durationMinutes: number }
 interface Slot { start: string; bookedCount: number; available: boolean }
+
+/** Optional pay-at-booking via MoMo -- never blocks the booking itself, which is already
+ * confirmed by the time this renders. Skipping or a failed charge both just mean paying
+ * at pickup as usual. */
+function MomoPaySection({ appointmentId, defaultPhone, total }: { appointmentId: string; defaultPhone: string; total: number }) {
+  const [phone, setPhone] = useState(defaultPhone);
+  const payMutation = useMutation({
+    mutationFn: () => api.post(`/appointments/${appointmentId}/pay`, { phoneNumber: phone }, { auth: false }),
+  });
+
+  if (payMutation.isSuccess) {
+    return (
+      <div className="border-t border-ink-800 pt-4 text-sm text-brand-300 flex items-center gap-2 justify-center">
+        <CheckCircle2 size={16} /> Paid via MoMo -- you're all set, no need to pay at pickup.
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-ink-800 pt-4 space-y-2 text-left">
+      <p className="text-sm text-ink-200 font-medium flex items-center gap-2">
+        <Smartphone size={15} className="text-brand-400" /> Pay with MoMo now (optional)
+      </p>
+      <p className="text-xs text-ink-400">
+        Estimated total RWF {total.toLocaleString()}. You can skip this and pay at pickup instead.
+      </p>
+      <div className="flex gap-2">
+        <input
+          className="input"
+          placeholder="MoMo phone number"
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+        />
+        <button
+          className="btn-primary whitespace-nowrap"
+          disabled={!phone || payMutation.isPending}
+          onClick={() => payMutation.mutate()}
+        >
+          {payMutation.isPending && <Loader2 size={14} className="animate-spin" />} Pay
+        </button>
+      </div>
+      {payMutation.isError && (
+        <p className="alert-danger text-xs">
+          {payMutation.error instanceof ApiError ? payMutation.error.message : "MoMo payment failed"} -- you can still pay at pickup.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function BookingPublic() {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
@@ -53,6 +102,7 @@ export function BookingPublic() {
           <div className="border-t border-ink-800 pt-4">
             <TrackingQrCard token={confirmation.trackingToken} caption="Keep this QR -- show it at check-in and scan it anytime to follow live progress." />
           </div>
+          <MomoPaySection appointmentId={confirmation.id} defaultPhone={customer.phone} total={total} />
           <button className="btn-primary" onClick={() => location.reload()}>Book another</button>
         </div>
       </div>

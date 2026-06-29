@@ -128,6 +128,7 @@ model Appointment {
 
   serviceItems AppointmentServiceItem[]
   queueEntry   QueueEntry?
+  invoice      Invoice?
 }
 
 model AppointmentServiceItem {
@@ -213,6 +214,11 @@ model Invoice {
   id                  String   @id @default(cuid())
   queueEntryId        String?  @unique
   queueEntry          QueueEntry? @relation(fields: [queueEntryId], references: [id])
+  // Lets a "pay with MoMo now" invoice exist at booking time, before any QueueEntry does
+  // -- checkIn() links it onto the new QueueEntry instead of leaving the visit to be
+  // invoiced again later.
+  appointmentId       String?  @unique
+  appointment         Appointment? @relation(fields: [appointmentId], references: [id])
   customerId          String
   customer            Customer @relation(fields: [customerId], references: [id])
   subtotal            Float

@@ -23,12 +23,17 @@ export async function checkIn(opts: { customerId: string; vehicleId: string; app
   // An online booking already carries a trackingToken from confirmation time -- reuse it so the
   // QR the customer received at booking keeps working after they arrive, instead of going stale.
   let trackingToken = newTrackingToken();
+  let prepaidInvoiceId: string | null = null;
   if (opts.appointmentId) {
-    const appt = await prisma.appointment.findUnique({ where: { id: opts.appointmentId } });
+    const appt = await prisma.appointment.findUnique({ where: { id: opts.appointmentId }, include: { invoice: true } });
     if (!appt) throw notFound("Appointment not found");
     if (appt.status !== "CONFIRMED") throw conflict("Appointment is not in a check-in-able state");
     await prisma.appointment.update({ where: { id: appt.id }, data: { status: "COMPLETED" } });
     trackingToken = appt.trackingToken ?? trackingToken;
+    // A "Pay with MoMo now" invoice created at booking time has no QueueEntry yet -- carry
+    // its id forward so it can be reattached below instead of Billing seeing this visit as
+    // still needing a fresh invoice (and risking a second charge).
+    prepaidInvoiceId = appt.invoice?.id ?? null;
   }
 
   const entry = await prisma.queueEntry.create({
@@ -41,6 +46,10 @@ export async function checkIn(opts: { customerId: string; vehicleId: string; app
       trackingToken,
     },
   });
+
+  if (prepaidInvoiceId) {
+    await prisma.invoice.update({ where: { id: prepaidInvoiceId }, data: { queueEntryId: entry.id } });
+  }
 
   const full = await fullQueueEntry(entry.id);
   const { subject, html } = templates.checkedIn(full.customer.name, full.vehicle, trackingUrl(trackingToken));

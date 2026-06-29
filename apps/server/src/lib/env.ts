@@ -22,4 +22,15 @@ export const env = {
     baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
     model: process.env.OLLAMA_MODEL || "ikinamba-ai",
   },
+  // All four must be set to use the real MTN MoMo sandbox/production API -- see
+  // docs/MOMO_SETUP_GUIDE.md. If any is missing, payments.js falls back to the
+  // simulated provider instead of throwing, so the app still runs without them.
+  momo: {
+    baseUrl: process.env.MOMO_BASE_URL || "",
+    subscriptionKey: process.env.MOMO_SUBSCRIPTION_KEY || "",
+    apiUser: process.env.MOMO_API_USER || "",
+    apiKey: process.env.MOMO_API_KEY || "",
+    targetEnvironment: process.env.MOMO_TARGET_ENVIRONMENT || "sandbox",
+    currency: process.env.MOMO_CURRENCY || "EUR",
+  },
 };

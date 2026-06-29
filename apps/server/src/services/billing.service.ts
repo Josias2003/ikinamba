@@ -51,6 +51,33 @@ export async function createInvoiceForQueueEntry(
   return invoice;
 }
 
+/** Lets a customer pay for their booking up front ("Pay with MoMo now") before any
+ * QueueEntry exists -- mirrors createInvoiceForQueueEntry's shape but prices off the
+ * appointment's requested service items instead of a completed ServiceJob's items.
+ * Idempotent: calling this again for an appointment that already has an invoice just
+ * returns the existing one instead of double-invoicing. */
+export async function createInvoiceForAppointment(appointmentId: string) {
+  const appt = await prisma.appointment.findUnique({
+    where: { id: appointmentId },
+    include: { serviceItems: { include: { catalogItem: true } }, invoice: true },
+  });
+  if (!appt) throw notFound("Appointment not found");
+  if (appt.invoice) return appt.invoice;
+
+  const subtotal = appt.serviceItems.reduce((sum, si) => sum + si.catalogItem.basePrice, 0);
+
+  return prisma.invoice.create({
+    data: {
+      appointmentId,
+      customerId: appt.customerId,
+      subtotal,
+      total: subtotal,
+      items: { create: appt.serviceItems.map((si) => ({ description: si.catalogItem.name, price: si.catalogItem.basePrice, qty: 1 })) },
+    },
+    include: { items: true },
+  });
+}
+
 export async function recordPayment(invoiceId: string, method: string, amount: number, phoneNumber?: string) {
   const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true, customer: true, items: true } });
   if (!invoice) throw notFound("Invoice not found");
