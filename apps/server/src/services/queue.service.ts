@@ -167,7 +167,23 @@ export async function signQualityCheck(queueEntryId: string, signedById: string)
   return full;
 }
 
+/** Vehicle pickup/release is a finance checkpoint, not just a quality one -- a vehicle
+ * already cleared QC can still be sitting on an unpaid or partially-paid invoice, and
+ * releasing it then means New Class Car Wash has no further leverage to collect. Blocks
+ * release until billing is settled, regardless of whether the release is triggered by the
+ * QR scan-to-pickup flow or the plain Complete button -- both call this same function. */
 export async function completeAndReleaseBay(queueEntryId: string) {
+  const existing = await prisma.queueEntry.findUnique({ where: { id: queueEntryId }, include: { invoice: true } });
+  if (!existing) throw notFound("Queue entry not found");
+  if (!existing.invoice) {
+    throw conflict("This vehicle has no invoice yet -- generate and pay the invoice in Billing before releasing it.");
+  }
+  if (existing.invoice.status !== "PAID") {
+    throw conflict(
+      `This vehicle's invoice is not fully paid (status: ${existing.invoice.status}) -- settle payment in Billing before releasing it.`
+    );
+  }
+
   const entry = await prisma.queueEntry.update({
     where: { id: queueEntryId },
     data: { status: "COMPLETED", completedAt: new Date() },

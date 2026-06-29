@@ -192,30 +192,36 @@ export function QueueBoard() {
         })}
       </div>
 
-      <div className="card">
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h3 className="font-semibold text-ink-200">Waiting ({board?.waiting.length ?? 0})</h3>
-          <div className="relative max-w-xs">
-            <Search className="absolute left-3 top-2 text-ink-400" size={14} />
-            <input className="input pl-8 text-xs py-1.5" placeholder="Filter plate or customer..." value={waitingFilter} onChange={(e) => setWaitingFilter(e.target.value)} />
+      {!waitingFilter && !board?.waiting.length ? (
+        <div className="flex items-center gap-2 text-sm text-ink-400 border border-ink-800 rounded-sm px-3 py-2">
+          <CheckCircle2 size={14} className="text-brand-400" /> No vehicles waiting.
+        </div>
+      ) : (
+        <div className="card">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h3 className="font-semibold text-ink-200">Waiting ({board?.waiting.length ?? 0})</h3>
+            <div className="relative max-w-xs">
+              <Search className="absolute left-3 top-2 text-ink-400" size={14} />
+              <input className="input pl-8 text-xs py-1.5" placeholder="Filter plate or customer..." value={waitingFilter} onChange={(e) => setWaitingFilter(e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-2">
+            {visibleWaiting?.map((e, i) => (
+              <div key={e.id} className="flex items-center justify-between text-sm border border-ink-800 rounded-sm px-3 py-2">
+                <span className="text-ink-400 w-6">#{i + 1}</span>
+                <span className="flex-1">{e.vehicle.make} {e.vehicle.model} - {e.vehicle.plate}</span>
+                <span className="text-ink-500">{e.customer.name}</span>
+                <button onClick={() => setQrToken(e.trackingToken)} className="text-brand-400 hover:underline flex items-center gap-1">
+                  <QrCode size={12} /> Show QR
+                </button>
+              </div>
+            ))}
+            {!visibleWaiting?.length && (
+              <p className="text-ink-400 text-sm">No waiting vehicles match "{waitingFilter}".</p>
+            )}
           </div>
         </div>
-        <div className="space-y-2">
-          {visibleWaiting?.map((e, i) => (
-            <div key={e.id} className="flex items-center justify-between text-sm border border-ink-800 rounded-sm px-3 py-2">
-              <span className="text-ink-400 w-6">#{i + 1}</span>
-              <span className="flex-1">{e.vehicle.make} {e.vehicle.model} - {e.vehicle.plate}</span>
-              <span className="text-ink-500">{e.customer.name}</span>
-              <button onClick={() => setQrToken(e.trackingToken)} className="text-brand-400 hover:underline flex items-center gap-1">
-                <QrCode size={12} /> Show QR
-              </button>
-            </div>
-          ))}
-          {!visibleWaiting?.length && (
-            <p className="text-ink-400 text-sm">{waitingFilter ? `No waiting vehicles match "${waitingFilter}".` : "No vehicles waiting."}</p>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

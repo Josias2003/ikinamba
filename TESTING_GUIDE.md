@@ -245,7 +245,23 @@ Expected result:
 The invoice status changes to `PAID`. Try calling `Pay` twice with two different methods
 on a fresh invoice to demonstrate a split payment.
 
-#### A8. (Optional) Login as Admin and refund the invoice
+#### A8. Release the vehicle (finance-checked)
+
+Releasing a vehicle is a finance checkpoint, not just a quality one -- the system blocks
+it until the invoice is fully paid, regardless of whether release happens via the
+Complete button or the QR scan-to-pickup flow.
+
+1. Before paying (to see the gate in action): sign in as Receptionist, open `Queue & bays`,
+   and click `Complete` on the bay -- or click `Scan to pick up` and scan the customer's QR
+   -- while the invoice is still unpaid or doesn't exist yet
+2. Confirm you get a clear error instead of the vehicle being released
+3. After completing A7 (invoice fully paid), repeat the same action
+
+Expected result:
+Blocked with an error before payment ("invoice is not fully paid" / "no invoice yet");
+succeeds and marks the visit `COMPLETED` once the invoice is `PAID`.
+
+#### A9. (Optional) Login as Admin and refund the invoice
 
 1. Sign out
 2. Login with:
@@ -344,6 +360,7 @@ Before sign-off, confirm:
 - Technician can move a job to QC and sign off
 - The customer's tracking page updates live with no refresh
 - Cashier can generate an invoice and record a payment
+- A vehicle can't be released/completed (Complete button or QR scan) until its invoice is fully paid
 - Admin can refund a paid invoice
 - Customers/Billing/audit-log pagination and search work against the full seeded dataset
 - A new user's first login is intercepted by the forced password-change screen

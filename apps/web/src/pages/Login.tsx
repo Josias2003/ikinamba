@@ -63,9 +63,6 @@ export function Login() {
           <button className="btn-primary w-full" type="submit" disabled={loading}>
             {loading && <Loader2 size={16} className="animate-spin" />} Log in
           </button>
-          <p className="text-xs text-ink-400 text-center">
-            Seeded staff password: <code>Passw0rd!</code>
-          </p>
           <p className="text-xs text-center">
             <Link to="/book" className="text-brand-400 hover:underline">
               Book a service without an account &rarr;
