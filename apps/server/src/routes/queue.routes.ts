@@ -48,15 +48,15 @@ queueRouter.post(
   asyncHandler(async (req, res) => res.json(await assignNextToBay(req.params.bayId)))
 );
 
-// Dispatch decision -- who works on what is RECEPTIONIST's call, not something a
-// technician can reassign for themself or others, and not MANAGER's job either (floor
-// dispatch is RECEPTIONIST's named responsibility, not a shared one).
+// Dispatch (assigning/reassigning any job) is RECEPTIONIST's call. A TECHNICIAN may
+// additionally hand off a job already assigned to themselves -- enforced inside
+// setTechnician(), not here, since it depends on whose job it currently is.
 queueRouter.patch(
   "/:id/technician",
-  requireRole("RECEPTIONIST"),
+  requireRole("RECEPTIONIST", "TECHNICIAN"),
   validateBody(z.object({ technicianId: z.string() })),
   asyncHandler(async (req, res) => {
-    await setTechnician(req.params.id, req.body.technicianId);
+    await setTechnician(req.params.id, req.body.technicianId, { id: req.user!.sub, role: req.user!.role });
     res.json({ ok: true });
   })
 );
@@ -79,8 +79,11 @@ queueRouter.patch(
   })
 );
 
+// RECEPTIONIST can release any vehicle; a TECHNICIAN can additionally release one
+// assigned to themselves (enforced inside completeAndReleaseBay(), which depends on
+// whose job it is) -- still finance-gated either way (see that function).
 queueRouter.patch(
   "/:id/complete",
-  requireRole("RECEPTIONIST"),
-  asyncHandler(async (req, res) => res.json(await completeAndReleaseBay(req.params.id)))
+  requireRole("RECEPTIONIST", "TECHNICIAN"),
+  asyncHandler(async (req, res) => res.json(await completeAndReleaseBay(req.params.id, { id: req.user!.sub, role: req.user!.role })))
 );

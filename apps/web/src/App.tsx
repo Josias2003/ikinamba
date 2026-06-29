@@ -88,8 +88,9 @@ export default function App() {
           </Route>
 
           {/* ADMIN's only actions here are refund (Billing) / PO-approve (Inventory) --
-              create/adjust/operate buttons are hidden for ADMIN inside these pages. */}
-          <Route element={<ProtectedRoute roles={["MANAGER", "CASHIER", "ADMIN"]} />}>
+              create/adjust/operate buttons are hidden for ADMIN inside these pages.
+              RECEPTIONIST/TECHNICIAN can additionally view receipts here, read-only. */}
+          <Route element={<ProtectedRoute roles={["MANAGER", "CASHIER", "ADMIN", "RECEPTIONIST", "TECHNICIAN"]} />}>
             <Route path="/billing" element={<Billing />} />
             <Route path="/billing/invoices/:id" element={<InvoiceDetail />} />
           </Route>

@@ -47,7 +47,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     id: "people",
-    label: "People",
+    label: "Customers",
     icon: Users,
     items: [
       { to: "/customers", label: "Customers & vehicles", icon: Users, roles: ["MANAGER", "RECEPTIONIST", "CASHIER", "TECHNICIAN"] },
@@ -61,7 +61,9 @@ export const NAV_GROUPS: NavGroup[] = [
       // ADMIN keeps these two pages so it has somewhere to exercise its financial-control
       // actions (refund / PO approval) -- every create/adjust/operate button on them is
       // hidden for ADMIN specifically, see Billing.tsx / InvoiceDetail.tsx / Inventory.tsx.
-      { to: "/billing", label: "Billing & invoices", icon: Receipt, roles: ["MANAGER", "CASHIER", "ADMIN"] },
+      // RECEPTIONIST/TECHNICIAN can additionally open this to view receipts (read-only --
+      // no create-invoice/pay/refund controls render for them, same pattern as ADMIN).
+      { to: "/billing", label: "Billing & invoices", icon: Receipt, roles: ["MANAGER", "CASHIER", "ADMIN", "RECEPTIONIST", "TECHNICIAN"] },
       { to: "/inventory", label: "Stock & purchase orders", icon: Package, roles: ["MANAGER", "ADMIN"] },
       { to: "/reports", label: "Reports & analytics", icon: BarChart3, roles: ["MANAGER", "ADMIN"] },
     ],

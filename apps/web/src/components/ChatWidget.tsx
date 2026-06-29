@@ -59,7 +59,7 @@ function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
     const when = new Date(display.data.scheduledAt).toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
     return (
       <div className="mt-2 border border-ink-700 rounded-sm p-2 text-xs text-ink-300 space-y-0.5">
-        <div><span className="text-ink-500">Service:</span> {display.data.services.join(", ")}</div>
+        <div><span className="text-ink-500">Service:</span> {display.data.serviceNames.join(", ")}</div>
         <div><span className="text-ink-500">Vehicle:</span> {display.data.vehicleMake} {display.data.vehicleModel} ({display.data.plate})</div>
         <div><span className="text-ink-500">When:</span> {when}</div>
         <div><span className="text-ink-500">Name/phone:</span> {display.data.customerName}, {display.data.phone}</div>

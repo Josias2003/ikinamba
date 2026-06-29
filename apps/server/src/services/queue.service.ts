@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma.js";
-import { badRequest, conflict, notFound } from "../lib/errors.js";
+import { badRequest, conflict, forbidden, notFound } from "../lib/errors.js";
 import { emitQueueBoardUpdate, emitTrackingUpdate } from "../lib/socket.js";
 import { notifyCustomer, notifyTechnician, templates } from "./notifications.service.js";
 import { newTrackingToken, trackingUrl, qrAttachment } from "../lib/tracking.js";
@@ -115,9 +115,15 @@ export async function assignNextToBay(bayId: string) {
   return entry;
 }
 
-export async function setTechnician(queueEntryId: string, technicianId: string) {
+/** RECEPTIONIST can reassign any job (the dispatch decision). A TECHNICIAN can only hand
+ * off a job already assigned to themselves -- not claim an unassigned job, not reassign
+ * someone else's. `caller` is omitted for RECEPTIONIST's unrestricted case. */
+export async function setTechnician(queueEntryId: string, technicianId: string, caller?: { id: string; role: string }) {
   const entry = await prisma.queueEntry.findUnique({ where: { id: queueEntryId }, include: { serviceJob: true } });
   if (!entry?.serviceJob) throw notFound("Service job not found for this queue entry");
+  if (caller?.role === "TECHNICIAN" && entry.serviceJob.technicianId !== caller.id) {
+    throw forbidden("You can only hand off a job that's currently assigned to you.");
+  }
   await prisma.serviceJob.update({ where: { id: entry.serviceJob.id }, data: { technicianId } });
   emitQueueBoardUpdate();
   await notifyTechnician(technicianId, queueEntryId);
@@ -181,9 +187,18 @@ export async function signQualityCheck(queueEntryId: string, signedById: string)
  * releasing it then means New Class Car Wash has no further leverage to collect. Blocks
  * release until billing is settled, regardless of whether the release is triggered by the
  * QR scan-to-pickup flow or the plain Complete button -- both call this same function. */
-export async function completeAndReleaseBay(queueEntryId: string) {
-  const existing = await prisma.queueEntry.findUnique({ where: { id: queueEntryId }, include: { invoice: true } });
+/** RECEPTIONIST can release any vehicle. A TECHNICIAN can only release one they're the
+ * assigned technician on -- not any other job on the floor. `caller` is omitted for
+ * RECEPTIONIST's unrestricted case. */
+export async function completeAndReleaseBay(queueEntryId: string, caller?: { id: string; role: string }) {
+  const existing = await prisma.queueEntry.findUnique({
+    where: { id: queueEntryId },
+    include: { invoice: true, serviceJob: true },
+  });
   if (!existing) throw notFound("Queue entry not found");
+  if (caller?.role === "TECHNICIAN" && existing.serviceJob?.technicianId !== caller.id) {
+    throw forbidden("You can only release a vehicle that's assigned to you.");
+  }
   if (!existing.invoice) {
     throw conflict("This vehicle has no invoice yet -- generate and pay the invoice in Billing before releasing it.");
   }

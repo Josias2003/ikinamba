@@ -63,7 +63,12 @@ appointmentsRouter.post(
 appointmentsRouter.get(
   "/",
   authenticate,
-  requireRole("RECEPTIONIST"),
+  // Read-only oversight for MANAGER (it has page access to see the day's bookings at a
+  // glance, per App.tsx's route guard) -- only the mutating actions below are
+  // RECEPTIONIST-exclusive. An earlier blanket find/replace incorrectly caught this GET
+  // too, which silently 403'd MANAGER's Appointments page despite the frontend still
+  // allowing navigation to it.
+  requireRole("MANAGER", "RECEPTIONIST"),
   asyncHandler(async (req, res) => {
     const date = req.query.date as string | undefined;
     const where = date

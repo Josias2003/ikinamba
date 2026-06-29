@@ -18,10 +18,13 @@ billingRouter.use(authenticate);
 // further down as its own single-actor route.
 const operateBilling = requireRole("CASHIER");
 
-// Vehicles ready for pickup (or already picked up) that don't have an invoice yet.
+// Vehicles ready for pickup (or already picked up) that don't have an invoice yet --
+// read-only oversight data, same as /invoices below, so MANAGER keeps visibility into the
+// invoicing backlog even though it can't act on it (operateBilling is CASHIER-only and is
+// reserved for the actual write actions further down).
 billingRouter.get(
   "/billable",
-  operateBilling,
+  requireRole("MANAGER", "CASHIER"),
   asyncHandler(async (_req, res) => {
     const entries = await prisma.queueEntry.findMany({
       where: { status: { in: ["READY", "COMPLETED"] }, invoice: null },
@@ -47,9 +50,11 @@ billingRouter.post(
 
 // Read access for ADMIN too -- it needs to find/view an invoice to exercise its one
 // billing action (refund), even though it can't create invoices or record payments.
+// RECEPTIONIST/TECHNICIAN can also view receipts read-only -- they have no write action
+// on this router at all, just visibility.
 billingRouter.get(
   "/invoices/:id",
-  requireRole("MANAGER", "CASHIER", "ADMIN"),
+  requireRole("MANAGER", "CASHIER", "ADMIN", "RECEPTIONIST", "TECHNICIAN"),
   asyncHandler(async (req, res) => {
     const invoice = await prisma.invoice.findUnique({
       where: { id: req.params.id },
@@ -64,7 +69,7 @@ const INVOICE_SORT_FIELDS = ["createdAt", "total", "status"] as const;
 
 billingRouter.get(
   "/invoices",
-  requireRole("MANAGER", "CASHIER", "ADMIN"),
+  requireRole("MANAGER", "CASHIER", "ADMIN", "RECEPTIONIST", "TECHNICIAN"),
   asyncHandler(async (req, res) => {
     const status = req.query.status as string | undefined;
     const params = readPageParams(req, INVOICE_SORT_FIELDS);

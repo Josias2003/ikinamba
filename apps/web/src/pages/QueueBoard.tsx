@@ -31,11 +31,14 @@ const BAY_BADGE: Record<string, string> = { IDLE: "badge-neutral", OCCUPIED: "ba
 const CAN_ASSIGN_BAY = ["RECEPTIONIST"];
 const CAN_WALK_IN = ["RECEPTIONIST"];
 const CAN_SIGN_QC = ["TECHNICIAN"];
-// Who works on what is a dispatch decision -- a technician can't reassign jobs
-// (including to themself), only RECEPTIONIST can.
-const CAN_ASSIGN_TECH = ["RECEPTIONIST"];
-
-const CAN_COMPLETE = ["RECEPTIONIST"];
+// Assigning/reassigning any job is RECEPTIONIST's dispatch call. A TECHNICIAN may
+// additionally hand off a job already assigned to themselves (see the ownership check
+// where this is used below) -- never claim an unassigned job or reassign someone else's.
+const CAN_ASSIGN_TECH = ["RECEPTIONIST", "TECHNICIAN"];
+// RECEPTIONIST can release any vehicle; TECHNICIAN can release one assigned to themselves
+// (ownership checked where this is used below).
+const CAN_COMPLETE_ANY = ["RECEPTIONIST"];
+const CAN_COMPLETE_OWN = ["TECHNICIAN"];
 
 export function QueueBoard() {
   const [waitingFilter, setWaitingFilter] = useState("");
@@ -44,6 +47,7 @@ export function QueueBoard() {
   const [error, setError] = useState("");
   const [qrToken, setQrToken] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [pickupSuccess, setPickupSuccess] = useState<Entry | null>(null);
   const { data: board } = useQuery({ queryKey: ["queue-board"], queryFn: () => api.get<Board>("/queue/board") });
   const visibleWaiting = useMemo(() => {
     const term = waitingFilter.trim().toLowerCase();
@@ -81,7 +85,8 @@ export function QueueBoard() {
         setError(`That vehicle is not ready for pickup yet (status: ${STATUS_LABEL[entry.status] ?? entry.status}).`);
         return;
       }
-      complete.mutate(entry.id);
+      await complete.mutateAsync(entry.id);
+      setPickupSuccess(entry);
     } catch (err) {
       onError(err);
     }
@@ -91,7 +96,7 @@ export function QueueBoard() {
     <div className="space-y-6">
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-3">
-          {user && CAN_COMPLETE.includes(user.role) && (
+          {user && (CAN_COMPLETE_ANY.includes(user.role) || CAN_COMPLETE_OWN.includes(user.role)) && (
             <button className="btn-secondary text-xs" onClick={() => setScanning(true)}>
               <ScanLine size={14} /> Scan to pick up
             </button>
@@ -109,13 +114,26 @@ export function QueueBoard() {
 
       {qrToken && (
         <Modal title="Customer tracking QR" onClose={() => setQrToken(null)}>
-          <TrackingQrCard token={qrToken} caption="Show this to the customer or print it for their receipt." />
+          <TrackingQrCard token={qrToken} caption="Show this to the customer -- they can scan it anytime to follow live progress." />
         </Modal>
       )}
 
       {scanning && (
         <Modal title="Scan customer QR to confirm pickup" onClose={() => setScanning(false)}>
           <QrScanner onToken={handleScan} onError={(msg) => { setScanning(false); setError(msg); }} />
+        </Modal>
+      )}
+
+      {pickupSuccess && (
+        <Modal title="Pickup confirmed" onClose={() => setPickupSuccess(null)}>
+          <div className="text-center space-y-3 py-2">
+            <CheckCircle2 size={40} className="text-brand-400 mx-auto" />
+            <p className="text-ink-100 font-medium">
+              {pickupSuccess.vehicle.make} {pickupSuccess.vehicle.model} ({pickupSuccess.vehicle.plate})
+            </p>
+            <p className="text-ink-400 text-sm">{pickupSuccess.customer.name} has picked up their vehicle.</p>
+            <button className="btn-primary w-full" onClick={() => setPickupSuccess(null)}>Done</button>
+          </div>
         </Modal>
       )}
 
@@ -146,7 +164,7 @@ export function QueueBoard() {
 
                   <AddItemsControl catalog={catalog} onAdd={(itemIds) => addItems.mutate({ id: entry.id, itemIds })} />
 
-                  {user && CAN_ASSIGN_TECH.includes(user.role) ? (
+                  {user && CAN_ASSIGN_TECH.includes(user.role) && (user.role !== "TECHNICIAN" || entry.serviceJob?.technician?.id === user.id) ? (
                     <select
                       className="input text-xs"
                       value={entry.serviceJob?.technician?.id ?? ""}
@@ -173,7 +191,8 @@ export function QueueBoard() {
                     {entry.status === "QUALITY_CHECK" && user && !CAN_SIGN_QC.includes(user.role) && (
                       <span className="text-xs text-ink-400">Awaiting technician sign-off</span>
                     )}
-                    {entry.status === "READY" && (
+                    {entry.status === "READY" && user &&
+                      (CAN_COMPLETE_ANY.includes(user.role) || (CAN_COMPLETE_OWN.includes(user.role) && entry.serviceJob?.technician?.id === user.id)) && (
                       <button className="btn-secondary text-xs" onClick={() => complete.mutate(entry.id)}>
                         <CheckCircle2 size={14} /> Mark picked up
                       </button>

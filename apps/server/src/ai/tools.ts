@@ -171,7 +171,12 @@ async function bookAppointmentTool(args: Record<string, unknown>): Promise<ToolR
       summary: `Here's what I have: ${matched.map((m) => m.name).join(", ")} for ${vehicleMake} ${vehicleModel} (${plate}) on ${when_}, under ${customerName}, ${phone}. Shall I book it?`,
       display: {
         type: "bookingPreview",
-        data: { customerName, phone, vehicleMake, vehicleModel, plate, services: matched.map((m) => m.name), scheduledAt: when.toISOString() },
+        // Same key name (serviceNames) the tool itself expects -- this object gets
+        // spread straight back into a confirmed=true call (see chatbot.ts's
+        // confirm-shortcut), so any mismatch here means the confirm step always fails
+        // re-validation instead of actually booking, even though the customer already
+        // gave every field on the previous turn.
+        data: { customerName, phone, vehicleMake, vehicleModel, plate, serviceNames: matched.map((m) => m.name), scheduledAt: when.toISOString() },
       },
     };
   }

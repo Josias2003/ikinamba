@@ -69,7 +69,7 @@ export function Appointments() {
 
       {qrToken && (
         <Modal title="Customer tracking QR" onClose={() => setQrToken(null)}>
-          <TrackingQrCard token={qrToken} caption="Show this to the customer or print it for their receipt." />
+          <TrackingQrCard token={qrToken} caption="Show this to the customer -- they can scan it anytime to follow live progress." />
         </Modal>
       )}
 
