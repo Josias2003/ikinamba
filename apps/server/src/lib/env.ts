@@ -14,9 +14,10 @@ export const env = {
   smtp: {
     host: process.env.SMTP_HOST || "",
     port: Number(process.env.SMTP_PORT || 587),
+    secure: process.env.SMTP_SECURE === "true",
     user: process.env.SMTP_USER || "",
     pass: process.env.SMTP_PASS || "",
-    from: process.env.SMTP_FROM || "IKINAMBA Car Wash <no-reply@ikinamba.local>",
+    from: process.env.SMTP_FROM || "New Class Car Wash <no-reply@newclasscarwash.rw>",
   },
   ollama: {
     baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
