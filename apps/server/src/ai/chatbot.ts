@@ -53,56 +53,133 @@ const VEHICLE_MAKES = [
   "Volvo", "Lexus", "Infiniti", "Skoda", "Seat", "Dodge", "Chevrolet", "Datsun",
 ];
 
-/** Server-side extraction of booking fields from full conversation text.
- * Used as a fallback when the model writes a plain-text summary instead of calling
- * the tool (a common failure mode for small local models). Not exhaustive but covers
- * the standard happy-path conversation where the customer gives info in natural sentences. */
+const MONTHS: Record<string, number> = {
+  january:0, february:1, march:2, april:3, may:4, june:5,
+  july:6, august:7, september:8, october:9, november:10, december:11,
+};
+
+/** Parse a natural language date/time string from a single message.
+ * Handles ISO, "DD Month YYYY HH:MM", "Month DD YYYY", "today/tomorrow at HH:MM". */
+function parseNaturalDate(text: string): string | undefined {
+  // ISO: 2026-06-30T18:00 or 2026-06-30 18:00
+  const isoM = text.match(/(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2})/);
+  if (isoM) { const d = new Date(isoM[1]); if (!isNaN(d.getTime())) return d.toISOString(); }
+
+  // "DD Month YYYY [at] HH:MM" e.g. "20 June 2026 18:00"
+  const dmyM = text.match(
+    /(\d{1,2})\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})(?:[^0-9]+(\d{1,2}):(\d{2}))?/i
+  );
+  if (dmyM) {
+    const d = new Date(Number(dmyM[3]), MONTHS[dmyM[2].toLowerCase()], Number(dmyM[1]),
+      dmyM[4] ? Number(dmyM[4]) : 9, dmyM[5] ? Number(dmyM[5]) : 0);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+
+  // "Month DD[,] YYYY [at] HH:MM" e.g. "June 30, 2026"
+  const mdyM = text.match(
+    /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})[,\s]+(\d{4})(?:[^0-9]+(\d{1,2}):(\d{2}))?/i
+  );
+  if (mdyM) {
+    const d = new Date(Number(mdyM[3]), MONTHS[mdyM[1].toLowerCase()], Number(mdyM[2]),
+      mdyM[4] ? Number(mdyM[4]) : 9, mdyM[5] ? Number(mdyM[5]) : 0);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+
+  // "today/tomorrow at HH:MM"
+  const relM = text.match(/\b(today|tomorrow)\b[^0-9]*(\d{1,2}):(\d{2})/i);
+  if (relM) {
+    const d = new Date();
+    if (relM[1].toLowerCase() === "tomorrow") d.setDate(d.getDate() + 1);
+    d.setHours(Number(relM[2]), Number(relM[3]), 0, 0);
+    if (!isNaN(d.getTime())) return d.toISOString();
+  }
+
+  return undefined;
+}
+
+/** Server-side extraction of booking fields from conversation history.
+ * Scans USER messages only (in reverse so the most recent correction wins) --
+ * used both to drive the 'FIELDS STILL NEEDED' prompt reminder and as a fallback
+ * when the model writes a plain-text summary instead of calling the tool. */
 function extractBookingFields(
   history: ChatHistoryItem[],
   catalog: { name: string }[]
 ): Record<string, unknown> {
-  const text = history.map((h) => h.content).join("\n");
+  // Only look at what the user said -- bot messages can confuse field extraction
+  const userMsgs = history.filter((h) => h.role === "user").map((h) => h.content);
+  const reversed = [...userMsgs].reverse();
+  const allUserText = userMsgs.join("\n");
 
-  // Rwandan plate: 2-3 letters + 2-4 digits + 1-2 letters, e.g. RAH334G
-  const plate = text.match(/\b([A-Za-z]{2,3}\d{2,4}[A-Za-z]{1,2})\b/)?.[1]?.toUpperCase();
+  // Rwandan plate (most recent mention -- user may correct)
+  let plate: string | undefined;
+  for (const msg of reversed) {
+    const m = msg.match(/\b([A-Za-z]{2,3}\d{2,4}[A-Za-z]{1,2})\b/);
+    if (m) { plate = m[1].toUpperCase(); break; }
+  }
 
-  // Phone: local 07xxxxxxxx or international 2507xxxxxxxx
-  const phone = text.match(/\b(07\d{8}|2507\d{8})\b/)?.[1];
+  // Phone (most recent)
+  let phone: string | undefined;
+  for (const msg of reversed) {
+    const m = msg.match(/\b(07\d{8}|2507\d{8})\b/);
+    if (m) { phone = m[1]; break; }
+  }
 
-  // Email
-  const email = text.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/)?.[1];
+  // Email (most recent)
+  let email: string | undefined;
+  for (const msg of reversed) {
+    const m = msg.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
+    if (m) { email = m[1]; break; }
+  }
 
-  // Customer name: after "my name is" / "I'm" / "I am" + proper nouns
-  const customerName = text
-    .match(/(?:my name is|I(?:'m| am))\s+([A-Z][a-zA-Zéèêëàâùûüôîï'-]+(?:\s+[A-Z][a-zA-Zéèêëàâùûüôîï'-]+)+)/i)
-    ?.[1]?.trim();
+  // Name: try multiple patterns across all user messages, prefer most recent match
+  let customerName: string | undefined;
+  for (const msg of reversed) {
+    // "my name is X Y" / "I'm X Y" / "I am X Y"
+    const m1 = msg.match(
+      /(?:my name is|I(?:'m| am))\s+([A-Za-z][a-zA-Z'-]+(?:\s+[A-Za-z][a-zA-Z'-]+)+)/i
+    );
+    if (m1) { customerName = m1[1].trim(); break; }
 
-  // Vehicle make (longest match wins so "Range Rover" beats "Range")
-  const vehicleMake = [...VEHICLE_MAKES]
-    .sort((a, b) => b.length - a.length)
-    .find((m) => new RegExp(`\\b${m.replace(" ", "\\s+")}\\b`, "i").test(text));
+    // Standalone two-word proper name on its own line/message, not a vehicle make
+    const m2 = msg.trim().match(/^([A-Z][a-z'-]+\s+[A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?)[\s,.]?$/);
+    if (m2 && !VEHICLE_MAKES.some((mk) => m2[1].toLowerCase().includes(mk.toLowerCase()))) {
+      customerName = m2[1].trim(); break;
+    }
+  }
 
-  // Vehicle model: first word immediately after the make (skip "and", "model", "is")
-  const vehicleModel = vehicleMake
-    ? text.match(
+  // Vehicle make (most recent user message mentioning a known make)
+  let vehicleMake: string | undefined;
+  let vehicleModel: string | undefined;
+  const sortedMakes = [...VEHICLE_MAKES].sort((a, b) => b.length - a.length);
+  for (const msg of reversed) {
+    const mk = sortedMakes.find((m) => new RegExp(`\\b${m.replace(" ", "\\s+")}\\b`, "i").test(msg));
+    if (mk) {
+      vehicleMake = mk;
+      const modelM = msg.match(
         new RegExp(
-          `\\b${vehicleMake.replace(" ", "\\s+")}\\b[^a-zA-Z0-9]*(?:(?:and\\s+)?model(?:\\s+is)?\\s+)?([A-Za-z0-9]+)`,
+          `\\b${mk.replace(" ", "\\s+")}\\b[^a-zA-Z0-9]*(?:(?:and\\s+)?model(?:\\s+is)?\\s+)?([A-Za-z0-9]+)`,
           "i"
         )
-      )?.[1]
-    : undefined;
+      );
+      vehicleModel = modelM?.[1];
+      break;
+    }
+  }
 
-  // Services: any catalog item whose significant words appear in the conversation
+  // Services: catalog items whose significant words appear anywhere in user messages
   const serviceNames = catalog
     .filter((s) => {
       const words = s.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-      return words.some((w) => text.toLowerCase().includes(w));
+      return words.some((w) => allUserText.toLowerCase().includes(w));
     })
     .map((s) => s.name);
 
-  // Date/time: ISO format (the LLM should have resolved relative phrases before writing)
-  const isoM = text.match(/\b(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2})/);
-  const scheduledAt = isoM ? new Date(isoM[1]).toISOString() : undefined;
+  // Date/time: most recent parseable date in any user message
+  let scheduledAt: string | undefined;
+  for (const msg of reversed) {
+    const parsed = parseNaturalDate(msg);
+    if (parsed) { scheduledAt = parsed; break; }
+  }
 
   return {
     customerName,
