@@ -2,6 +2,7 @@ import { prisma } from "../lib/prisma.js";
 import { chatWithLocalAI } from "./ollamaClient.js";
 import { getOperationalSnapshot } from "./insights.js";
 import { toolsForRole, executeTool } from "./tools.js";
+import { logger } from "../lib/logger.js";
 import type { Role } from "../types/enums.js";
 
 const FLOOR_ROLES: Role[] = ["MANAGER", "CASHIER", "RECEPTIONIST", "TECHNICIAN"];
@@ -205,7 +206,7 @@ export async function askChatbot(history: ChatHistoryItem[], role?: Role): Promi
   if (role && ADMIN_ROLES.includes(role)) scopedBlocks.push(await buildAdminSnapshot());
 
   const today = new Date().toISOString().slice(0, 10);
-  const systemPrompt = `
+  let systemPrompt = `
 You are New Class Car Wash's virtual assistant, Gisimenti, Kigali, Rwanda.
 Today's date is ${today} -- use this to resolve relative dates like "tomorrow" or "Friday".
 You help customers choose services, understand pricing/duration, and book or track a vehicle.
@@ -223,11 +224,33 @@ To check status, tell them to use their QR tracking link sent at check-in.
 Keep answers short (2-4 sentences). Output plain text only -- no markdown, no asterisks, no bold/headers.
 `.trim();
 
-  const tools = toolsForRole(role);
-  const result = await chatWithLocalAI(
-    [{ role: "system", content: systemPrompt }, ...history],
-    { tools, temperature: 0.15 }
+  // Inject a real-time "still missing" reminder so the model can't skip fields it hasn't
+  // collected yet -- static system-prompt rules alone aren't reliable with small local
+  // models; a specific per-turn reminder that lists exactly what's outstanding is far more
+  // effective. Only added when we detect the conversation is already in a booking flow
+  // (user mentioned booking/service/vehicle in a prior turn).
+  const inBookingFlow = history.some(
+    (h) => h.role === "user" && /\b(book|appointment|wash|service|vehicle|car)\b/i.test(h.content)
   );
+  if (inBookingFlow) {
+    const alreadyCollected = extractBookingFields(history, services);
+    const stillMissing = missingBookingFields(alreadyCollected);
+    if (stillMissing.length) {
+      systemPrompt += `\n\nFIELDS STILL NEEDED (do NOT call the tool yet, ask for these first, one at a time): ${stillMissing.join(", ")}.`;
+    }
+  }
+
+  const tools = toolsForRole(role);
+  let result: Awaited<ReturnType<typeof chatWithLocalAI>>;
+  try {
+    result = await chatWithLocalAI(
+      [{ role: "system", content: systemPrompt }, ...history],
+      { tools, temperature: 0.15 }
+    );
+  } catch (err) {
+    logger.error({ err }, "Chatbot LLM call failed");
+    return { reply: "I'm having a brief technical issue. Please try again in a moment." };
+  }
 
   const toolCall = result.toolCalls?.[0];
   if (!toolCall) {
