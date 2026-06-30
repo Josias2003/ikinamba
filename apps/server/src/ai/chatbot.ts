@@ -68,6 +68,9 @@ function extractBookingFields(
   // Phone: local 07xxxxxxxx or international 2507xxxxxxxx
   const phone = text.match(/\b(07\d{8}|2507\d{8})\b/)?.[1];
 
+  // Email
+  const email = text.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/)?.[1];
+
   // Customer name: after "my name is" / "I'm" / "I am" + proper nouns
   const customerName = text
     .match(/(?:my name is|I(?:'m| am))\s+([A-Z][a-zA-Zéèêëàâùûüôîï'-]+(?:\s+[A-Z][a-zA-Zéèêëàâùûüôîï'-]+)+)/i)
@@ -103,6 +106,7 @@ function extractBookingFields(
   return {
     customerName,
     phone,
+    email,
     vehicleMake,
     vehicleModel,
     plate,
@@ -115,6 +119,7 @@ function missingBookingFields(args: Record<string, unknown>): string[] {
   const missing: string[] = [];
   if (!args.customerName) missing.push("your full name");
   if (!args.phone) missing.push("your phone number");
+  if (!args.email) missing.push("your email address");
   if (!args.vehicleMake || !args.vehicleModel) missing.push("the vehicle make and model");
   if (!args.plate) missing.push("the license plate number");
   if (!Array.isArray(args.serviceNames) || !(args.serviceNames as unknown[]).length)
@@ -211,7 +216,7 @@ ${scopedBlocks.length ? `\nAdditional operational data you may answer questions 
 Rules: Only quote prices/services from the catalog above, and only discuss the operational data given to you -- never invent numbers.
 If asked something outside what you were given (including operational data not listed above), say it's outside what you have access to and suggest reception or the relevant dashboard page.
 To book an appointment, use the book_appointment tool -- only call it once you have every required field. If anything is missing, ask for it in natural conversational language; never mention parameter or field names literally.
-Required fields are exactly: name, phone number, vehicle make/model, plate number (license plate -- always ask for this if not given), which service(s), and the date/time -- nothing else. An email address is NOT required and the tool has no field for it -- never ask for one, and never treat a booking as incomplete for lacking one. If a customer offers an email anyway, acknowledge it but do not wait on it.
+Required fields are exactly: name, phone number, email address, vehicle make/model, plate number (license plate -- always ask for this if not given), which service(s), and the date/time. Email is required -- it is how the customer receives their booking confirmation and tracking QR code. Always ask for it; do not skip or treat the booking as complete without it.
 CRITICAL: The booking does not exist until the book_appointment tool returns. NEVER write the words "confirmed", "booked", "scheduled", "all set", or any synonym yourself -- doing so tells the customer something is saved when nothing is. If you have every required field, call book_appointment immediately; the tool reply tells the customer what happened. If you are missing even one field, ask for it -- do not guess or skip.
 book_appointment is two-step: call it first with confirmed omitted/false once you have all fields -- it returns a summary for the customer to verify, nothing is saved yet. Call it again with confirmed=true only after the customer explicitly says yes/confirm/correct/book it/go ahead in their next message.
 To check status, tell them to use their QR tracking link sent at check-in.

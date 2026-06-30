@@ -41,6 +41,7 @@ const BOOK_APPOINTMENT: ToolDefinition = {
       properties: {
         customerName: { type: "string", description: "Customer's full name" },
         phone: { type: "string", description: "Customer's phone number" },
+        email: { type: "string", description: "Customer's email address -- required for the confirmation email with tracking QR. Always ask for it." },
         vehicleMake: { type: "string" },
         vehicleModel: { type: "string" },
         plate: { type: "string", description: "Vehicle license plate" },
@@ -53,7 +54,7 @@ const BOOK_APPOINTMENT: ToolDefinition = {
             "Set true ONLY on a later call, with the exact same details, after the customer has explicitly said yes/confirmed/correct in response to that summary.",
         },
       },
-      required: ["customerName", "phone", "vehicleMake", "vehicleModel", "plate", "serviceNames", "scheduledAt"],
+      required: ["customerName", "phone", "email", "vehicleMake", "vehicleModel", "plate", "serviceNames", "scheduledAt"],
     },
   },
 };
@@ -110,15 +111,12 @@ export async function executeTool(name: string, args: Record<string, unknown>, r
 }
 
 async function bookAppointmentTool(args: Record<string, unknown>): Promise<ToolResult> {
-  const { customerName, phone, vehicleMake, vehicleModel, plate, serviceNames, scheduledAt, confirmed } = args as Record<string, unknown>;
+  const { customerName, phone, email, vehicleMake, vehicleModel, plate, serviceNames, scheduledAt, confirmed } = args as Record<string, unknown>;
 
-  // Defense in depth: the tool schema marks these required, but never trust the model's
-  // arguments blindly -- re-check before touching the database, and say exactly what's
-  // still missing (the model can drop a field or pass an unparsable date even when the
-  // user already gave it -- a generic "missing details" message just loops the user).
   const missing: string[] = [];
   if (!customerName) missing.push("your name");
   if (!phone) missing.push("a phone number");
+  if (!email) missing.push("an email address");
   if (!vehicleMake || !vehicleModel) missing.push("the vehicle's make and model");
   if (!plate) missing.push("the plate number");
   if (!Array.isArray(serviceNames) || !serviceNames.length) missing.push("which service(s) you'd like");
@@ -168,21 +166,16 @@ async function bookAppointmentTool(args: Record<string, unknown>): Promise<ToolR
     const when_ = when.toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
     return {
       ok: true,
-      summary: `Here's what I have: ${matched.map((m) => m.name).join(", ")} for ${vehicleMake} ${vehicleModel} (${plate}) on ${when_}, under ${customerName}, ${phone}. Shall I book it?`,
+      summary: `Here's what I have: ${matched.map((m) => m.name).join(", ")} for ${vehicleMake} ${vehicleModel} (${plate}) on ${when_}, under ${customerName} (${phone}, ${email}). Shall I book it?`,
       display: {
         type: "bookingPreview",
-        // Same key name (serviceNames) the tool itself expects -- this object gets
-        // spread straight back into a confirmed=true call (see chatbot.ts's
-        // confirm-shortcut), so any mismatch here means the confirm step always fails
-        // re-validation instead of actually booking, even though the customer already
-        // gave every field on the previous turn.
-        data: { customerName, phone, vehicleMake, vehicleModel, plate, serviceNames: matched.map((m) => m.name), scheduledAt: when.toISOString() },
+        data: { customerName, phone, email, vehicleMake, vehicleModel, plate, serviceNames: matched.map((m) => m.name), scheduledAt: when.toISOString() },
       },
     };
   }
 
   const appointment = await createPublicBooking({
-    customer: { name: customerName as string, phone: phone as string },
+    customer: { name: customerName as string, phone: phone as string, email: email as string },
     vehicle: { make: vehicleMake as string, model: vehicleModel as string, year: new Date().getFullYear(), plate: plate as string },
     scheduledAt: when,
     serviceItemIds: matched.map((m) => m.id),
