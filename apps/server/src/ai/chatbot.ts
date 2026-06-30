@@ -98,9 +98,9 @@ ${scopedBlocks.length ? `\nAdditional operational data you may answer questions 
 Rules: Only quote prices/services from the catalog above, and only discuss the operational data given to you -- never invent numbers.
 If asked something outside what you were given (including operational data not listed above), say it's outside what you have access to and suggest reception or the relevant dashboard page.
 To book an appointment, use the book_appointment tool -- only call it once you have every required field. If anything is missing, ask for it in natural conversational language; never mention parameter or field names literally.
-Required fields are exactly: name, phone number, vehicle make/model, plate number, which service(s), and the date/time -- nothing else. An email address is NOT required and the tool has no field for it -- never ask for one, and never treat a booking as incomplete for lacking one. If a customer offers an email anyway, you may pass it along verbally but do not wait on it.
-The booking does not exist until you call book_appointment. Never say a booking is confirmed, scheduled, or booked yourself -- if you have every required field, call book_appointment immediately in that same turn instead of describing the booking in words; the tool's own reply will tell you and the customer what happens next.
-book_appointment is two-step: call it first with confirmed left out/false once you have all fields -- it replies with a summary for the customer to check, it does not book anything yet. Only call it again with confirmed=true, using the exact same details, after the customer has explicitly said something like yes/confirm/that's right in their next message.
+Required fields are exactly: name, phone number, vehicle make/model, plate number (license plate -- always ask for this if not given), which service(s), and the date/time -- nothing else. An email address is NOT required and the tool has no field for it -- never ask for one, and never treat a booking as incomplete for lacking one. If a customer offers an email anyway, acknowledge it but do not wait on it.
+CRITICAL: The booking does not exist until the book_appointment tool returns. NEVER write the words "confirmed", "booked", "scheduled", "all set", or any synonym yourself -- doing so tells the customer something is saved when nothing is. If you have every required field, call book_appointment immediately; the tool reply tells the customer what happened. If you are missing even one field, ask for it -- do not guess or skip.
+book_appointment is two-step: call it first with confirmed omitted/false once you have all fields -- it returns a summary for the customer to verify, nothing is saved yet. Call it again with confirmed=true only after the customer explicitly says yes/confirm/correct/book it/go ahead in their next message.
 To check status, tell them to use their QR tracking link sent at check-in.
 Keep answers short (2-4 sentences). Output plain text only -- no markdown, no asterisks, no bold/headers.
 `.trim();
@@ -111,7 +111,23 @@ Keep answers short (2-4 sentences). Output plain text only -- no markdown, no as
   const result = await chatWithLocalAI([{ role: "system", content: systemPrompt }, ...history], { tools, temperature: 0.15 });
 
   const toolCall = result.toolCalls?.[0];
-  if (!toolCall) return { reply: result.content };
+  if (!toolCall) {
+    // Small local models sometimes write "your booking is confirmed" in plain text instead
+    // of calling the tool -- catch it before it lies to the customer.  When that happens,
+    // redirect to collecting whatever's typically missing (plate number is the most common
+    // field customers skip) rather than silently returning a false confirmation.
+    const lower = result.content.toLowerCase();
+    const looksLikeFakeConfirm =
+      /\b(booking (is |has been )?(confirmed|scheduled|booked)|appointment (is |has been )?confirmed|you('re| are) (all set|booked))\b/.test(lower) &&
+      !/\bshall i book|shall i confirm|can i confirm|want me to book\b/.test(lower);
+    if (looksLikeFakeConfirm) {
+      return {
+        reply:
+          "Before I can lock that in, I still need your vehicle's license plate number. What is it?",
+      };
+    }
+    return { reply: result.content };
+  }
 
   const outcome = await executeTool(toolCall.function.name, toolCall.function.arguments, role);
   return outcome.ok ? { reply: outcome.summary, display: outcome.display } : { reply: outcome.message };
