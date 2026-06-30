@@ -22,15 +22,16 @@ export const env = {
     baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
     model: process.env.OLLAMA_MODEL || "ikinamba-ai",
   },
-  // OAuth2 client-credentials creds from the "Payments V1" product on
-  // developers.mtn.com (My Apps -> app row -> Consumer key/secret). All three must be
-  // set to use the real API -- see docs/MOMO_SETUP_GUIDE.md. If any is missing,
-  // mockProvider.ts falls back to the simulated provider instead of throwing, so the
-  // app still runs without them.
+  // MTN MoMo Collections sandbox credentials -- see docs/MOMO_SETUP_GUIDE.md for the
+  // click-by-click setup. All four (subscriptionKey, apiUser, apiKey, targetEnv) must be
+  // set to use the real sandbox; if any is missing, mockProvider.ts falls back to the
+  // simulated provider so the app still runs without sandbox credentials.
   momo: {
-    baseUrl: process.env.MOMO_BASE_URL || "",
-    consumerKey: process.env.MOMO_CONSUMER_KEY || "",
-    consumerSecret: process.env.MOMO_CONSUMER_SECRET || "",
-    currency: process.env.MOMO_CURRENCY || "RWF",
+    baseUrl: process.env.MOMO_BASE_URL || "https://sandbox.momodeveloper.mtn.com",
+    subscriptionKey: process.env.MOMO_SUBSCRIPTION_KEY || "",
+    apiUser: process.env.MOMO_API_USER || "",
+    apiKey: process.env.MOMO_API_KEY || "",
+    targetEnv: process.env.MOMO_TARGET_ENV || "sandbox",
+    currency: process.env.MOMO_CURRENCY || "EUR",
   },
 };

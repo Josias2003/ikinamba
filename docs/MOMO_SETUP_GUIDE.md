@@ -68,7 +68,7 @@ MOMO_BASE_URL="https://sandbox.momodeveloper.mtn.com"
 MOMO_SUBSCRIPTION_KEY="<your Primary Key from step 1>"
 MOMO_API_USER="<the UUID you generated in step 2>"
 MOMO_API_KEY="<the key from step 3>"
-MOMO_TARGET_ENVIRONMENT="sandbox"
+MOMO_TARGET_ENV="sandbox"
 MOMO_CURRENCY="EUR"
 ```
 
