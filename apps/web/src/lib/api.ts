@@ -28,7 +28,8 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     if (token) finalHeaders["Authorization"] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`/api${path}`, { ...rest, headers: finalHeaders });
+  const base = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+  const res = await fetch(`${base}/api${path}`, { ...rest, headers: finalHeaders });
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -52,7 +53,8 @@ export const api = {
   // throwaway blob link instead.
   async download(path: string, filename: string) {
     const token = getToken();
-    const res = await fetch(`/api${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const base = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+    const res = await fetch(`${base}/api${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
     if (!res.ok) throw new ApiError(res.status, "Download failed");
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
