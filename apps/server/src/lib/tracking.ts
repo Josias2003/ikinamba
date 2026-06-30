@@ -7,7 +7,7 @@ export function newTrackingToken() {
 }
 
 export function trackingUrl(token: string) {
-  return `${env.clientOrigin}/track/${token}`;
+  return `${env.appUrl}/track/${token}`;
 }
 
 /** Inline QR attachment for the tracking link, referenced in email HTML via `cid:qrcode`. */
