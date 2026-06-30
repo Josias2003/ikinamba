@@ -129,6 +129,29 @@ Keep answers short (2-4 sentences). Output plain text only -- no markdown, no as
     return { reply: result.content };
   }
 
+  // Pre-flight: if the model is calling book_appointment but is still missing required
+  // fields, intercept before touching the DB and tell the customer exactly what's needed.
+  // The tool does the same check, but catching it here gives a cleaner conversational
+  // response and avoids the round-trip into the service layer for an incomplete call.
+  if (toolCall.function.name === "book_appointment") {
+    const a = toolCall.function.arguments as Record<string, unknown>;
+    const missing: string[] = [];
+    if (!a.customerName) missing.push("your name");
+    if (!a.phone) missing.push("your phone number");
+    if (!a.vehicleMake || !a.vehicleModel) missing.push("the vehicle make and model");
+    if (!a.plate) missing.push("the license plate number");
+    if (!Array.isArray(a.serviceNames) || !(a.serviceNames as unknown[]).length) missing.push("which service(s) you want");
+    if (!a.scheduledAt) missing.push("the preferred date and time");
+    if (missing.length) {
+      return {
+        reply:
+          missing.length === 1
+            ? `I still need ${missing[0]} to complete this booking. Could you share that?`
+            : `I still need a few things before I can book: ${missing.join(", ")}. Could you provide those?`,
+      };
+    }
+  }
+
   const outcome = await executeTool(toolCall.function.name, toolCall.function.arguments, role);
   return outcome.ok ? { reply: outcome.summary, display: outcome.display } : { reply: outcome.message };
 }
