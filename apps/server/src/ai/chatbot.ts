@@ -4,10 +4,6 @@ import { getOperationalSnapshot } from "./insights.js";
 import { toolsForRole, executeTool } from "./tools.js";
 import type { Role } from "../types/enums.js";
 
-// Mirrors the role boundaries already encoded in the frontend's NAV_GROUPS
-// (components/Layout.tsx) -- the assistant unlocks the same topics the sidebar would let
-// that role navigate to, rather than a separately-maintained permission list. ADMIN is
-// deliberately not on FLOOR_ROLES: real per-role separation, not seniority inheritance.
 const FLOOR_ROLES: Role[] = ["MANAGER", "CASHIER", "RECEPTIONIST", "TECHNICIAN"];
 const MONEY_ROLES: Role[] = ["ADMIN", "MANAGER"];
 const ADMIN_ROLES: Role[] = ["ADMIN"];
@@ -49,27 +45,144 @@ interface ChatHistoryItem {
 
 const AFFIRMATIVE = /^\s*(yes|yeah|yep|yup|confirm(ed)?|correct|that'?s right|go ahead|book it|sure|ok(ay)?)\b/i;
 
+const VEHICLE_MAKES = [
+  "Toyota", "Honda", "BMW", "Mercedes", "Volkswagen", "VW", "Kia", "Hyundai",
+  "Nissan", "Range Rover", "Land Rover", "Ford", "Audi", "Subaru", "Mitsubishi",
+  "Mazda", "Peugeot", "Renault", "Jeep", "Suzuki", "Isuzu", "Fiat", "Opel",
+  "Volvo", "Lexus", "Infiniti", "Skoda", "Seat", "Dodge", "Chevrolet", "Datsun",
+];
+
+/** Server-side extraction of booking fields from full conversation text.
+ * Used as a fallback when the model writes a plain-text summary instead of calling
+ * the tool (a common failure mode for small local models). Not exhaustive but covers
+ * the standard happy-path conversation where the customer gives info in natural sentences. */
+function extractBookingFields(
+  history: ChatHistoryItem[],
+  catalog: { name: string }[]
+): Record<string, unknown> {
+  const text = history.map((h) => h.content).join("\n");
+
+  // Rwandan plate: 2-3 letters + 2-4 digits + 1-2 letters, e.g. RAH334G
+  const plate = text.match(/\b([A-Za-z]{2,3}\d{2,4}[A-Za-z]{1,2})\b/)?.[1]?.toUpperCase();
+
+  // Phone: local 07xxxxxxxx or international 2507xxxxxxxx
+  const phone = text.match(/\b(07\d{8}|2507\d{8})\b/)?.[1];
+
+  // Customer name: after "my name is" / "I'm" / "I am" + proper nouns
+  const customerName = text
+    .match(/(?:my name is|I(?:'m| am))\s+([A-Z][a-zA-Zéèêëàâùûüôîï'-]+(?:\s+[A-Z][a-zA-Zéèêëàâùûüôîï'-]+)+)/i)
+    ?.[1]?.trim();
+
+  // Vehicle make (longest match wins so "Range Rover" beats "Range")
+  const vehicleMake = [...VEHICLE_MAKES]
+    .sort((a, b) => b.length - a.length)
+    .find((m) => new RegExp(`\\b${m.replace(" ", "\\s+")}\\b`, "i").test(text));
+
+  // Vehicle model: first word immediately after the make (skip "and", "model", "is")
+  const vehicleModel = vehicleMake
+    ? text.match(
+        new RegExp(
+          `\\b${vehicleMake.replace(" ", "\\s+")}\\b[^a-zA-Z0-9]*(?:(?:and\\s+)?model(?:\\s+is)?\\s+)?([A-Za-z0-9]+)`,
+          "i"
+        )
+      )?.[1]
+    : undefined;
+
+  // Services: any catalog item whose significant words appear in the conversation
+  const serviceNames = catalog
+    .filter((s) => {
+      const words = s.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+      return words.some((w) => text.toLowerCase().includes(w));
+    })
+    .map((s) => s.name);
+
+  // Date/time: ISO format (the LLM should have resolved relative phrases before writing)
+  const isoM = text.match(/\b(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2})/);
+  const scheduledAt = isoM ? new Date(isoM[1]).toISOString() : undefined;
+
+  return {
+    customerName,
+    phone,
+    vehicleMake,
+    vehicleModel,
+    plate,
+    serviceNames: serviceNames.length ? serviceNames : undefined,
+    scheduledAt,
+  };
+}
+
+function missingBookingFields(args: Record<string, unknown>): string[] {
+  const missing: string[] = [];
+  if (!args.customerName) missing.push("your full name");
+  if (!args.phone) missing.push("your phone number");
+  if (!args.vehicleMake || !args.vehicleModel) missing.push("the vehicle make and model");
+  if (!args.plate) missing.push("the license plate number");
+  if (!Array.isArray(args.serviceNames) || !(args.serviceNames as unknown[]).length)
+    missing.push("which service(s) you want");
+  if (!args.scheduledAt) missing.push("the preferred date and time");
+  return missing;
+}
+
 /** Booking/FAQ assistant grounded with real service catalog + bay data pulled from the DB,
  * so it can't hallucinate prices/services that don't exist. When called by a logged-in
  * staff member (role passed in), it's additionally grounded with operational data scoped
- * to what that role can already see elsewhere in the app -- anonymous customers and
- * unrecognized roles only ever get the base booking/FAQ grounding below. Can also act:
- * booking a real appointment, or pulling up a live chart, via the tools in ai/tools.ts. */
+ * to what that role can already see elsewhere in the app. */
 export async function askChatbot(history: ChatHistoryItem[], role?: Role): Promise<ChatbotReply> {
-  // If the previous turn showed a booking preview and the user just confirmed it, book
-  // directly from that already-validated data instead of asking the model to re-extract
-  // every field from the conversation again -- a small local model occasionally drops or
-  // re-mangles a field on a repeat extraction, which a real booking flow can't tolerate.
-  const lastAssistant = history[history.length - 2];
   const lastUser = history[history.length - 1];
-  if (
-    lastUser?.role === "user" &&
-    AFFIRMATIVE.test(lastUser.content) &&
-    lastAssistant?.role === "assistant" &&
-    lastAssistant.display?.type === "bookingPreview"
-  ) {
-    const outcome = await executeTool("book_appointment", { ...(lastAssistant.display.data as Record<string, unknown>), confirmed: true }, role);
-    return outcome.ok ? { reply: outcome.summary, display: outcome.display } : { reply: outcome.message };
+  const lastAssistant = history[history.length - 2];
+
+  if (lastUser?.role === "user" && AFFIRMATIVE.test(lastUser.content)) {
+    // SHORTCUT 1: a proper bookingPreview exists anywhere in the recent 10 turns.
+    // Search back rather than only checking the immediately previous message -- the model
+    // sometimes inserts an extra conversational turn between the preview and the user's yes.
+    const preview = history
+      .slice(-10)
+      .reverse()
+      .find((h) => h.role === "assistant" && h.display?.type === "bookingPreview");
+    if (preview) {
+      const outcome = await executeTool(
+        "book_appointment",
+        { ...(preview.display!.data as Record<string, unknown>), confirmed: true },
+        role
+      );
+      return outcome.ok
+        ? { reply: outcome.summary, display: outcome.display }
+        : { reply: outcome.message };
+    }
+
+    // SHORTCUT 2: model wrote a plain-text booking summary without calling the tool.
+    // Detected by: last assistant message has no display object but reads like a summary
+    // (mentions plate / vehicle / service / RWF / "proceed"). Extract what we can from
+    // the conversation; if everything is present, book directly (user already said yes
+    // so no need for another preview round-trip); if something is still missing, ask for
+    // just that one thing.
+    const summaryLike =
+      lastAssistant?.role === "assistant" &&
+      !lastAssistant.display &&
+      /\b(plate|vehicle|service|rwf|proceed|confirm|would you like)\b/i.test(
+        lastAssistant.content ?? ""
+      );
+    if (summaryLike) {
+      const svcs = await prisma.serviceCatalogItem.findMany({ where: { isActive: true } });
+      const extracted = extractBookingFields(history, svcs);
+      const missing = missingBookingFields(extracted);
+      if (!missing.length) {
+        const outcome = await executeTool(
+          "book_appointment",
+          { ...extracted, confirmed: true },
+          role
+        );
+        return outcome.ok
+          ? { reply: outcome.summary, display: outcome.display }
+          : { reply: outcome.message };
+      }
+      return {
+        reply:
+          missing.length === 1
+            ? `Just one more thing before I can book: ${missing[0]}?`
+            : `Almost there! I still need: ${missing.join(", ")}.`,
+      };
+    }
   }
 
   const [services, bays] = await Promise.all([
@@ -106,42 +219,49 @@ Keep answers short (2-4 sentences). Output plain text only -- no markdown, no as
 `.trim();
 
   const tools = toolsForRole(role);
-  // Lower temperature than the dashboard-narrative call -- tool-call argument extraction
-  // benefits from determinism far more than it benefits from fluent/varied phrasing.
-  const result = await chatWithLocalAI([{ role: "system", content: systemPrompt }, ...history], { tools, temperature: 0.15 });
+  const result = await chatWithLocalAI(
+    [{ role: "system", content: systemPrompt }, ...history],
+    { tools, temperature: 0.15 }
+  );
 
   const toolCall = result.toolCalls?.[0];
   if (!toolCall) {
-    // Small local models sometimes write "your booking is confirmed" in plain text instead
-    // of calling the tool -- catch it before it lies to the customer.  When that happens,
-    // redirect to collecting whatever's typically missing (plate number is the most common
-    // field customers skip) rather than silently returning a false confirmation.
     const lower = result.content.toLowerCase();
     const looksLikeFakeConfirm =
-      /\b(booking (is |has been )?(confirmed|scheduled|booked)|appointment (is |has been )?confirmed|you('re| are) (all set|booked))\b/.test(lower) &&
-      !/\bshall i book|shall i confirm|can i confirm|want me to book\b/.test(lower);
+      /\b(booking (is |has been )?(confirmed|scheduled|booked)|appointment (is |has been )?confirmed|you('re| are) (all set|booked))\b/.test(
+        lower
+      ) && !/\bshall i book|shall i confirm|can i confirm|want me to book\b/.test(lower);
+
     if (looksLikeFakeConfirm) {
+      // Check what's actually missing from the conversation instead of blindly asking for plate.
+      // If everything is in the history, call the tool properly rather than looping.
+      const extracted = extractBookingFields(history, services);
+      const missing = missingBookingFields(extracted);
+      if (!missing.length) {
+        const outcome = await executeTool(
+          "book_appointment",
+          { ...extracted, confirmed: false },
+          role
+        );
+        return outcome.ok
+          ? { reply: outcome.summary, display: outcome.display }
+          : { reply: outcome.message };
+      }
       return {
         reply:
-          "Before I can lock that in, I still need your vehicle's license plate number. What is it?",
+          missing.length === 1
+            ? `Before I can confirm that, I still need ${missing[0]}.`
+            : `Before I can confirm that, I still need: ${missing.join(", ")}.`,
       };
     }
     return { reply: result.content };
   }
 
-  // Pre-flight: if the model is calling book_appointment but is still missing required
-  // fields, intercept before touching the DB and tell the customer exactly what's needed.
-  // The tool does the same check, but catching it here gives a cleaner conversational
-  // response and avoids the round-trip into the service layer for an incomplete call.
+  // Pre-flight: if the model calls book_appointment with fields still missing, catch it
+  // here for a cleaner conversational response before the service layer runs.
   if (toolCall.function.name === "book_appointment") {
     const a = toolCall.function.arguments as Record<string, unknown>;
-    const missing: string[] = [];
-    if (!a.customerName) missing.push("your name");
-    if (!a.phone) missing.push("your phone number");
-    if (!a.vehicleMake || !a.vehicleModel) missing.push("the vehicle make and model");
-    if (!a.plate) missing.push("the license plate number");
-    if (!Array.isArray(a.serviceNames) || !(a.serviceNames as unknown[]).length) missing.push("which service(s) you want");
-    if (!a.scheduledAt) missing.push("the preferred date and time");
+    const missing = missingBookingFields(a);
     if (missing.length) {
       return {
         reply:
