@@ -1,46 +1,50 @@
-import nodemailer, { type Transporter } from "nodemailer";
 import { env } from "./env.js";
 import { logger } from "./logger.js";
 
-let transporterPromise: Promise<Transporter> | undefined;
+const BREVO_API = "https://api.brevo.com/v3/smtp/email";
 
-async function buildTransporter(): Promise<Transporter> {
-  if (env.smtp.host) {
-    return nodemailer.createTransport({
-      host: env.smtp.host,
-      port: env.smtp.port,
-      secure: env.smtp.secure,
-      auth: env.smtp.user ? { user: env.smtp.user, pass: env.smtp.pass } : undefined,
-    });
-  }
-  // No SMTP configured -- spin up a disposable Ethereal test inbox so the
-  // notification flow is fully demoable with zero setup.
-  const testAccount = await nodemailer.createTestAccount();
-  logger.warn(
-    `No SMTP_HOST configured -- using Ethereal test inbox. Login: ${testAccount.user} / ${testAccount.pass}`
-  );
-  return nodemailer.createTransport({
-    host: testAccount.smtp.host,
-    port: testAccount.smtp.port,
-    secure: testAccount.smtp.secure,
-    auth: { user: testAccount.user, pass: testAccount.pass },
-  });
-}
-
-export function getTransporter() {
-  if (!transporterPromise) transporterPromise = buildTransporter();
-  return transporterPromise;
-}
-
+/** Send a transactional email via the Brevo API.
+ * Attachments with a `cid` become inline images (referenced as cid:X in the HTML).
+ * If BREVO_API_KEY is not set, the email is skipped with a warning -- email is
+ * non-blocking so a missing key should never crash a booking or payment flow. */
 export async function sendEmail(
   to: string,
   subject: string,
   html: string,
   attachments?: { filename: string; content: Buffer; cid?: string }[]
-) {
-  const transporter = await getTransporter();
-  const info = await transporter.sendMail({ from: env.smtp.from, to, subject, html, attachments });
-  const previewUrl = nodemailer.getTestMessageUrl(info);
-  if (previewUrl) logger.info(`Email preview (Ethereal): ${previewUrl}`);
-  return { messageId: info.messageId, previewUrl: previewUrl || null };
+): Promise<{ messageId: string | null; previewUrl: null }> {
+  if (!env.brevo.apiKey || !env.brevo.from) {
+    logger.warn({ to, subject }, "Brevo not configured (BREVO_API_KEY / BREVO_FROM missing) -- email skipped");
+    return { messageId: null, previewUrl: null };
+  }
+
+  const body: Record<string, unknown> = {
+    sender: { name: env.brevo.senderName, email: env.brevo.from },
+    to: [{ email: to }],
+    subject,
+    htmlContent: html,
+  };
+
+  if (attachments?.length) {
+    body.attachment = attachments.map((a) => ({
+      name: a.filename,
+      content: a.content.toString("base64"),
+      ...(a.cid ? { contentId: a.cid } : {}),
+    }));
+  }
+
+  const res = await fetch(BREVO_API, {
+    method: "POST",
+    headers: { "api-key": env.brevo.apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Brevo API ${res.status}: ${errText}`);
+  }
+
+  const data = (await res.json()) as { messageId?: string };
+  logger.info({ to, subject, messageId: data.messageId }, "Email sent via Brevo");
+  return { messageId: data.messageId ?? null, previewUrl: null };
 }

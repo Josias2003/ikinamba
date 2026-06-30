@@ -11,13 +11,10 @@ export const env = {
   clientOrigin: required("CLIENT_ORIGIN", "http://localhost:5173").split(",").map((s) => s.trim()),
   jwtSecret: required("JWT_SECRET"),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "8h",
-  smtp: {
-    host: process.env.SMTP_HOST || "",
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === "true",
-    user: process.env.SMTP_USER || "",
-    pass: process.env.SMTP_PASS || "",
-    from: process.env.SMTP_FROM || "New Class Car Wash <no-reply@newclasscarwash.rw>",
+  brevo: {
+    apiKey: process.env.BREVO_API_KEY || "",
+    from: process.env.BREVO_FROM || "",
+    senderName: process.env.BREVO_SENDER_NAME || "New Class Car Wash",
   },
   ollama: {
     baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
