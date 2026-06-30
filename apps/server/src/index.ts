@@ -11,4 +11,5 @@ startCronJobs();
 
 httpServer.listen(env.port, () => {
   logger.info(`IKINAMBA server listening on http://localhost:${env.port}`);
+  logger.info(`Tracking links / QR codes → ${env.appUrl}`);
 });

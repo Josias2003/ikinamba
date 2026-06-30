@@ -1,4 +1,5 @@
 import "dotenv/config";
+import os from "os";
 
 function required(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
@@ -6,10 +7,31 @@ function required(name: string, fallback?: string): string {
   return value;
 }
 
+/** Returns the machine's current LAN IP so tracking links and CORS work on any device
+ * on the same network without ever hardcoding an IP in .env. Prefers hotspot/10.x
+ * addresses (phone hotspot) over router LAN (192.168.x). Falls back to localhost. */
+function detectLanIp(): string {
+  const candidates: string[] = [];
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+    if (/loopback|vmware|virtual|docker|vethernet|bluetooth|hyper/i.test(name)) continue;
+    for (const net of addrs ?? []) {
+      if (net.family !== "IPv4" || net.internal || net.address.startsWith("169.254.")) continue;
+      candidates.push(net.address);
+    }
+  }
+  return candidates.find((ip) => ip.startsWith("10.")) ?? candidates.find((ip) => ip.startsWith("192.168.")) ?? candidates[0] ?? "localhost";
+}
+
+const lanIp = detectLanIp();
+const frontendPort = 5173;
+
 export const env = {
   port: Number(process.env.PORT ?? 4000),
-  clientOrigin: required("CLIENT_ORIGIN", "http://localhost:5173").split(",").map((s) => s.trim()),
-  appUrl: (process.env.APP_URL || "http://localhost:5173").replace(/\/$/, ""),
+  // If explicitly set (production), use as-is. In dev, auto-build from detected LAN IP.
+  clientOrigin: process.env.CLIENT_ORIGIN
+    ? process.env.CLIENT_ORIGIN.split(",").map((s) => s.trim())
+    : [`http://localhost:${frontendPort}`, `http://${lanIp}:${frontendPort}`],
+  appUrl: process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, "") : `http://${lanIp}:${frontendPort}`,
   jwtSecret: required("JWT_SECRET"),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? "8h",
   brevo: {
