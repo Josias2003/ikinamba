@@ -31,6 +31,21 @@ const SHOW_QUEUE_STATUS: ToolDefinition = {
   },
 };
 
+const CHECK_VEHICLE_STATUS: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "check_vehicle_status",
+    description: "Check the current service progress of a vehicle by its plate number. Call this when someone asks about their car's status, how far along it is, which bay it's in, or when it will be ready.",
+    parameters: {
+      type: "object",
+      properties: {
+        plate: { type: "string", description: "The vehicle license plate number to look up" },
+      },
+      required: ["plate"],
+    },
+  },
+};
+
 const BOOK_APPOINTMENT: ToolDefinition = {
   type: "function",
   function: {
@@ -60,7 +75,7 @@ const BOOK_APPOINTMENT: ToolDefinition = {
 };
 
 export function toolsForRole(role?: Role): ToolDefinition[] {
-  const tools: ToolDefinition[] = [BOOK_APPOINTMENT];
+  const tools: ToolDefinition[] = [BOOK_APPOINTMENT, CHECK_VEHICLE_STATUS];
   if (role && FLOOR_ROLES.includes(role)) tools.push(SHOW_QUEUE_STATUS);
   if (role && MONEY_ROLES.includes(role)) tools.push(SHOW_REVENUE_CHART);
   return tools;
@@ -76,6 +91,10 @@ export async function executeTool(name: string, args: Record<string, unknown>, r
   const allowed = toolsForRole(role).map((t) => t.function.name);
   if (!allowed.includes(name)) {
     return { ok: false, message: "That's outside what I have access to for your account." };
+  }
+
+  if (name === "check_vehicle_status") {
+    return checkVehicleStatusTool(args);
   }
 
   if (name === "show_revenue_chart") {
@@ -108,6 +127,64 @@ export async function executeTool(name: string, args: Record<string, unknown>, r
   }
 
   return { ok: false, message: "I don't know how to do that yet." };
+}
+
+async function checkVehicleStatusTool(args: Record<string, unknown>): Promise<ToolResult> {
+  const plate = String(args.plate ?? "").trim();
+  if (!plate) return { ok: false, message: "Please provide the plate number you'd like to check." };
+
+  const STAGE_LABELS: Record<string, string> = {
+    WAITING: "waiting in the queue",
+    IN_SERVICE: "currently being serviced",
+    QUALITY_CHECK: "in quality check",
+    READY: "ready for pickup",
+    COMPLETED: "completed",
+  };
+
+  // MySQL is case-insensitive by default so plain `contains` handles e.g. "RAD123" vs "rad123"
+  const vehicle = await prisma.vehicle.findFirst({
+    where: { plate: { contains: plate } },
+    select: { id: true, make: true, model: true, plate: true },
+  });
+
+  if (vehicle) {
+    const entry = await prisma.queueEntry.findFirst({
+      where: { vehicleId: vehicle.id, status: { not: "COMPLETED" } },
+      include: { bay: { select: { name: true } }, serviceJob: { include: { items: { select: { name: true } } } } },
+      orderBy: { checkedInAt: "desc" },
+    });
+
+    if (entry) {
+      const label = STAGE_LABELS[entry.status] ?? entry.status;
+      const bayInfo = entry.bay ? ` in bay ${entry.bay.name}` : "";
+      const services = entry.serviceJob?.items.map((i) => i.name).join(", ") ?? "";
+      const pickup = entry.status === "READY" ? " Please come to collect your vehicle!" : "";
+      return {
+        ok: true,
+        summary: `${vehicle.make} ${vehicle.model} (${vehicle.plate}) is ${label}${bayInfo}.${services ? ` Services: ${services}.` : ""}${pickup}`,
+        display: {
+          type: "vehicleStatus",
+          data: { status: entry.status, plate: vehicle.plate, vehicle, bay: entry.bay?.name ?? null, services: entry.serviceJob?.items.map((i) => i.name) ?? [] },
+        },
+      };
+    }
+
+    const appt = await prisma.appointment.findFirst({
+      where: { vehicleId: vehicle.id, status: { notIn: ["CANCELLED", "COMPLETED"] } },
+      orderBy: { scheduledAt: "asc" },
+    });
+
+    if (appt) {
+      const when = appt.scheduledAt.toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      return {
+        ok: true,
+        summary: `${vehicle.make} ${vehicle.model} (${vehicle.plate}) has an appointment booked for ${when}. It hasn't been checked in yet.`,
+        display: { type: "vehicleStatus", data: { status: "BOOKED", plate: vehicle.plate, vehicle, bay: null, services: [], scheduledAt: appt.scheduledAt } },
+      };
+    }
+  }
+
+  return { ok: false, message: `No active booking or service found for plate "${plate}". Double-check the plate or ask our front desk for help.` };
 }
 
 async function bookAppointmentTool(args: Record<string, unknown>): Promise<ToolResult> {
