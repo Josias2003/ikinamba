@@ -6,7 +6,7 @@ import { TrackingQrCard } from "./TrackingQrCard";
 import { useTheme } from "../context/ThemeContext";
 
 interface ChatDisplay {
-  type: "revenueChart" | "queueStatus" | "bookingConfirmed" | "bookingPreview";
+  type: "revenueChart" | "queueStatus" | "bookingConfirmed" | "bookingPreview" | "vehicleStatus" | "availabilitySlots" | "appointmentLookup";
   data: any;
 }
 interface ChatMessage {
@@ -64,6 +64,73 @@ function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
         <div><span className="text-ink-500">When:</span> {when}</div>
         <div><span className="text-ink-500">Name/phone:</span> {display.data.customerName}, {display.data.phone}</div>
         <span className="badge-warn mt-1">Not booked yet -- reply to confirm</span>
+      </div>
+    );
+  }
+  if (display.type === "vehicleStatus") {
+    const STATUS_COLOR: Record<string, string> = {
+      WAITING:       "badge-warn",
+      IN_SERVICE:    "badge-live",
+      QUALITY_CHECK: "badge-live",
+      READY:         "badge-success",
+      BOOKED:        "badge-neutral",
+      COMPLETED:     "badge-neutral",
+    };
+    const STATUS_LABEL: Record<string, string> = {
+      WAITING:       "Waiting in queue",
+      IN_SERVICE:    "In service",
+      QUALITY_CHECK: "Quality check",
+      READY:         "Ready for pickup",
+      BOOKED:        "Appointment booked",
+      COMPLETED:     "Completed",
+    };
+    return (
+      <div className="mt-2 border border-ink-700 rounded-sm p-2 text-xs text-ink-300 space-y-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={STATUS_COLOR[display.data.status] ?? "badge-neutral"}>
+            {STATUS_LABEL[display.data.status] ?? display.data.status}
+          </span>
+          {display.data.bay && <span className="text-ink-400">Bay: <strong>{display.data.bay}</strong></span>}
+        </div>
+        <div><span className="text-ink-500">Vehicle:</span> {display.data.vehicle.make} {display.data.vehicle.model} ({display.data.plate})</div>
+        {display.data.services?.length > 0 && (
+          <div><span className="text-ink-500">Services:</span> {display.data.services.join(", ")}</div>
+        )}
+        {display.data.scheduledAt && (
+          <div><span className="text-ink-500">Appointment:</span> {new Date(display.data.scheduledAt).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
+        )}
+      </div>
+    );
+  }
+  if (display.type === "availabilitySlots") {
+    const day = new Date(display.data.date).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    return (
+      <div className="mt-2 space-y-1.5">
+        <p className="text-xs text-ink-400 font-medium">{day}</p>
+        <div className="flex flex-wrap gap-1">
+          {display.data.slots.map((s: string) => (
+            <span key={s} className="badge-live text-xs">
+              {new Date(s).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            </span>
+          ))}
+        </div>
+        <p className="text-xs text-ink-500">Tell me which time you'd like and I'll book it.</p>
+      </div>
+    );
+  }
+  if (display.type === "appointmentLookup") {
+    const when = new Date(display.data.scheduledAt).toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return (
+      <div className="mt-2 border border-ink-700 rounded-sm p-2 text-xs text-ink-300 space-y-0.5">
+        <div><span className="text-ink-500">Service:</span> {display.data.services}</div>
+        <div><span className="text-ink-500">Vehicle:</span> {display.data.vehicle.make} {display.data.vehicle.model} ({display.data.vehicle.plate})</div>
+        <div><span className="text-ink-500">When:</span> {when}</div>
+        <span className="badge-live mt-1">{display.data.status}</span>
+        {display.data.trackingToken && (
+          <div className="pt-2">
+            <TrackingQrCard token={display.data.trackingToken} caption="Your tracking QR" />
+          </div>
+        )}
       </div>
     );
   }

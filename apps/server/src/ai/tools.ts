@@ -6,10 +6,6 @@ import { assertSlotAvailable, getAvailability, createPublicBooking } from "../se
 import type { ToolDefinition } from "./ollamaClient.js";
 import type { Role } from "../types/enums.js";
 
-// Same role boundaries as the grounding blocks in chatbot.ts -- kept here too since tool
-// availability and grounding-block availability are conceptually the same permission.
-// ADMIN doesn't run the floor (real per-role separation, not seniority inheritance) --
-// see [[project-kariza-roles-separation]].
 const FLOOR_ROLES: Role[] = ["MANAGER", "CASHIER", "RECEPTIONIST", "TECHNICIAN"];
 const MONEY_ROLES: Role[] = ["ADMIN", "MANAGER"];
 
@@ -46,6 +42,37 @@ const CHECK_VEHICLE_STATUS: ToolDefinition = {
   },
 };
 
+const SHOW_AVAILABILITY: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "show_availability",
+    description: "Show available booking time slots for a specific date. Call this when a customer asks when you are free, what times are available, whether a date has openings, or before they have picked a time slot.",
+    parameters: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "The date to check, in YYYY-MM-DD format. Resolve relative phrases like 'tomorrow' or 'this Saturday' to an actual date before calling." },
+      },
+      required: ["date"],
+    },
+  },
+};
+
+const LOOKUP_MY_APPOINTMENT: ToolDefinition = {
+  type: "function",
+  function: {
+    name: "lookup_my_appointment",
+    description: "Look up a customer's upcoming appointment by their email address or phone number. Call when someone asks to confirm their booking, check if it was saved, or says 'did my booking go through?'.",
+    parameters: {
+      type: "object",
+      properties: {
+        email: { type: "string", description: "Customer's email address" },
+        phone: { type: "string", description: "Customer's phone number (use if no email given)" },
+      },
+      required: [],
+    },
+  },
+};
+
 const BOOK_APPOINTMENT: ToolDefinition = {
   type: "function",
   function: {
@@ -75,7 +102,7 @@ const BOOK_APPOINTMENT: ToolDefinition = {
 };
 
 export function toolsForRole(role?: Role): ToolDefinition[] {
-  const tools: ToolDefinition[] = [BOOK_APPOINTMENT, CHECK_VEHICLE_STATUS];
+  const tools: ToolDefinition[] = [BOOK_APPOINTMENT, CHECK_VEHICLE_STATUS, SHOW_AVAILABILITY, LOOKUP_MY_APPOINTMENT];
   if (role && FLOOR_ROLES.includes(role)) tools.push(SHOW_QUEUE_STATUS);
   if (role && MONEY_ROLES.includes(role)) tools.push(SHOW_REVENUE_CHART);
   return tools;
@@ -86,16 +113,14 @@ export type ToolResult =
   | { ok: false; message: string };
 
 export async function executeTool(name: string, args: Record<string, unknown>, role?: Role): Promise<ToolResult> {
-  // Re-check permission server-side -- never trust that the model only requested a tool
-  // it was actually offered.
   const allowed = toolsForRole(role).map((t) => t.function.name);
   if (!allowed.includes(name)) {
     return { ok: false, message: "That's outside what I have access to for your account." };
   }
 
-  if (name === "check_vehicle_status") {
-    return checkVehicleStatusTool(args);
-  }
+  if (name === "check_vehicle_status") return checkVehicleStatusTool(args);
+  if (name === "show_availability")    return showAvailabilityTool(args);
+  if (name === "lookup_my_appointment") return lookupMyAppointmentTool(args);
 
   if (name === "show_revenue_chart") {
     const metrics = await getDashboardMetrics(defaultRange());
@@ -122,11 +147,77 @@ export async function executeTool(name: string, args: Record<string, unknown>, r
     };
   }
 
-  if (name === "book_appointment") {
-    return bookAppointmentTool(args);
-  }
+  if (name === "book_appointment") return bookAppointmentTool(args);
 
   return { ok: false, message: "I don't know how to do that yet." };
+}
+
+async function showAvailabilityTool(args: Record<string, unknown>): Promise<ToolResult> {
+  const dateStr = String(args.date ?? "").trim();
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) {
+    return { ok: false, message: "I couldn't understand that date. Could you try something like 'July 5' or '2026-07-05'?" };
+  }
+  const slots = await getAvailability(date);
+  const available = slots.filter((s) => s.available);
+  const dayLabel = date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+  if (!available.length) {
+    return { ok: false, message: `We're fully booked on ${dayLabel}. Would you like to try a different day?` };
+  }
+  return {
+    ok: true,
+    summary: `We have ${available.length} open slot${available.length !== 1 ? "s" : ""} on ${dayLabel}. Pick a time below, then tell me which you'd like.`,
+    display: {
+      type: "availabilitySlots",
+      data: { date: dateStr, slots: available.map((s) => s.start) },
+    },
+  };
+}
+
+async function lookupMyAppointmentTool(args: Record<string, unknown>): Promise<ToolResult> {
+  const email = (args.email as string | undefined)?.trim().toLowerCase();
+  const phone = (args.phone as string | undefined)?.trim();
+  if (!email && !phone) {
+    return { ok: false, message: "Could you give me your email address or phone number so I can find your booking?" };
+  }
+  const customer = await prisma.customer.findFirst({
+    where: email ? { email } : { phone: phone! },
+  });
+  if (!customer) {
+    return { ok: false, message: "I couldn't find an account with those details. Double-check the email or phone, or ask our front desk for help." };
+  }
+  const appt = await prisma.appointment.findFirst({
+    where: {
+      customerId: customer.id,
+      status: { notIn: ["CANCELLED", "COMPLETED"] },
+      scheduledAt: { gte: new Date() },
+    },
+    include: { vehicle: true, serviceItems: { include: { catalogItem: true } } },
+    orderBy: { scheduledAt: "asc" },
+  });
+  if (!appt) {
+    return {
+      ok: false,
+      message: `Hi ${customer.name}! I don't see any upcoming appointments on your account. Would you like to book one?`,
+    };
+  }
+  const when = appt.scheduledAt.toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const services = appt.serviceItems.map((si) => si.catalogItem.name).join(", ");
+  return {
+    ok: true,
+    summary: `Hi ${customer.name}! Your booking is confirmed: ${services} on ${when} for ${appt.vehicle.make} ${appt.vehicle.model} (${appt.vehicle.plate}).`,
+    display: {
+      type: "appointmentLookup",
+      data: {
+        customerName: customer.name,
+        services,
+        scheduledAt: appt.scheduledAt.toISOString(),
+        vehicle: { make: appt.vehicle.make, model: appt.vehicle.model, plate: appt.vehicle.plate },
+        trackingToken: appt.trackingToken,
+        status: appt.status,
+      },
+    },
+  };
 }
 
 async function checkVehicleStatusTool(args: Record<string, unknown>): Promise<ToolResult> {
@@ -141,7 +232,6 @@ async function checkVehicleStatusTool(args: Record<string, unknown>): Promise<To
     COMPLETED: "completed",
   };
 
-  // MySQL is case-insensitive by default so plain `contains` handles e.g. "RAD123" vs "rad123"
   const vehicle = await prisma.vehicle.findFirst({
     where: { plate: { contains: plate } },
     select: { id: true, make: true, model: true, plate: true },
@@ -236,9 +326,6 @@ async function bookAppointmentTool(args: Record<string, unknown>): Promise<ToolR
     throw err;
   }
 
-  // Read back the exact resolved details before writing anything -- catches the small
-  // model's occasional date-arithmetic mistakes (e.g. "tomorrow" resolved to the wrong
-  // day) by giving the customer a chance to see and correct it before it's booked.
   if (confirmed !== true) {
     const when_ = when.toLocaleString([], { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
     return {

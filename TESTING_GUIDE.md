@@ -285,14 +285,32 @@ Type: `I want to book. My email is testcustomer@gmail.com`
 **Expected:** Bot finds Alice's record and skips asking for name/phone/vehicle.
 It should only ask for service and date.
 
-### Test D - Vehicle status check
+### Test D - Vehicle status check (with display card)
 Type: `What is the status of plate RAD 123 A?`
-**Expected:** Bot returns the current stage (waiting / in service / ready / booked).
+**Expected:** Bot returns the current stage AND a status card shows inline with the stage
+badge (Waiting / In service / Quality check / Ready), bay name, and services list.
 
-### Test E - Staff-only tool (access control)
+### Test E - Check availability before booking
+Type: `Are you free this Saturday?`
+**Expected:** Bot shows a grid of available time slots for Saturday inline in the chat.
+You can then say `Book me at 10am` and continue the booking flow.
+
+### Test F - Returning customer confirms their booking
+Type: `Did my booking go through? My email is testcustomer@gmail.com`
+**Expected:** Bot finds Alice's appointment and shows a confirmation card with service,
+vehicle, date/time, and the tracking QR code - all without asking a single extra question.
+
+### Test G - Staff-only tool (access control)
 Log in as Manager, open the chat, type: `Show me revenue chart`
 **Expected:** A revenue chart renders inline.
 Log out, open the public chatbot, type the same - **Expected:** politely refused.
+
+### Test H - Voice input (impressive live demo)
+On Chrome or Edge (voice is not supported in Firefox):
+Click the microphone button in the chat and say: `I want to book a full car wash tomorrow`
+**Expected:** Your speech appears as text in the input box. Press Send and the bot starts
+the booking flow. This is the only feature that needs Chrome/Edge - everything else works
+in any browser.
 
 ---
 
