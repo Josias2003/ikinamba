@@ -1,8 +1,8 @@
-# IKINAMBA — Smart Car Wash Management System
+# IKINAMBA - Smart Car Wash Management System
 
 A full-stack web application for **New Class Car Wash** (Gisimenti, Kigali, Rwanda).
 It handles online bookings, live queue management, payments, inventory, AI-powered
-chatbot assistance, and real-time vehicle tracking — all from one system.
+chatbot assistance, and real-time vehicle tracking - all from one system.
 
 ---
 
@@ -18,12 +18,12 @@ chatbot assistance, and real-time vehicle tracking — all from one system.
 | **Admin** | Create/deactivate user accounts, review the audit log, oversee everything |
 
 **Key features:**
-- Online booking with returning-customer auto-fill (type your email → your details fill in automatically)
-- Real-time vehicle tracking via QR code — customers watch their car move through stages live
+- Online booking with returning-customer auto-fill (type your email, your details fill in automatically)
+- Real-time vehicle tracking via QR code - customers watch their car move through stages live
 - AI chatbot that can book appointments, answer pricing questions, and check vehicle status by plate number
 - MTN MoMo sandbox payment integration
 - Email notifications (booking confirmation, cancellation, ready-for-pickup)
-- Role-based access control — each staff role sees only what it needs
+- Role-based access control - each staff role sees only what it needs
 - Maintenance inspection module with DTC fault codes
 - Inventory management with low-stock alerts
 - PDF and Excel report exports
@@ -49,23 +49,23 @@ chatbot assistance, and real-time vehicle tracking — all from one system.
 
 ```
 ikinamba/
-├── apps/
-│   ├── server/          ← Node.js/Express API (port 4000)
-│   │   ├── prisma/      ← Database schema and migrations
-│   │   ├── src/
-│   │   │   ├── ai/      ← Chatbot engine and tools
-│   │   │   ├── lib/     ← env, mailer, prisma client
-│   │   │   ├── middleware/
-│   │   │   ├── routes/
-│   │   │   └── services/
-│   │   └── .env         ← Your local config (never committed)
-│   └── web/             ← React SPA (port 5173)
-│       └── src/
-│           ├── components/
-│           ├── pages/
-│           └── lib/
-├── TESTING_GUIDE.md     ← Step-by-step guide to run and test everything
-└── README.md            ← This file
+|-- apps/
+|   |-- server/          <- Node.js/Express API (port 4000)
+|   |   |-- prisma/      <- Database schema and migrations
+|   |   |-- src/
+|   |   |   |-- ai/      <- Chatbot engine and tools
+|   |   |   |-- lib/     <- env, mailer, prisma client
+|   |   |   |-- middleware/
+|   |   |   |-- routes/
+|   |   |   `-- services/
+|   |   `-- .env         <- Your local config (never committed)
+|   `-- web/             <- React SPA (port 5173)
+|       `-- src/
+|           |-- components/
+|           |-- pages/
+|           `-- lib/
+|-- TESTING_GUIDE.md     <- Step-by-step guide to run and test everything
+`-- README.md            <- This file
 ```
 
 ---
@@ -74,9 +74,9 @@ ikinamba/
 
 ### Requirements
 
-- Node.js 20 LTS — [nodejs.org](https://nodejs.org)
-- MySQL 8 — [dev.mysql.com/downloads](https://dev.mysql.com/downloads/installer)
-- Git
+- Node.js 20 LTS - nodejs.org
+- MySQL 8 - dev.mysql.com/downloads/installer
+- Git - git-scm.com
 
 ### 1. Clone and install
 
@@ -118,7 +118,7 @@ cd ../..
 ```
 
 Seeding creates 2,500 demo customers, vehicles, visit history, and all staff accounts.
-**Wait for it to finish — it takes 3–5 minutes.**
+**Wait for it to finish - it takes 3 to 5 minutes.**
 
 ### 5. Start the app
 
@@ -153,7 +153,7 @@ Go to **http://localhost:5173/book**
 - You get a QR code to track your vehicle live
 - A confirmation email is sent automatically
 
-**Returning customer?** Just type your email and press Tab — name, phone, and vehicle fill in automatically.
+**Returning customer?** Just type your email and press Tab - name, phone, and vehicle fill in automatically.
 
 ---
 
@@ -176,7 +176,7 @@ Everything else works without the chatbot.
 ## Testing guide
 
 See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for a complete walkthrough:
-- Full vehicle visit flow (booking → check-in → service → QC → payment → release)
+- Full vehicle visit flow (booking -> check-in -> service -> QC -> payment -> release)
 - All 5 staff roles tested step by step
 - Chatbot booking and vehicle status check
 - MoMo sandbox payment with test phone numbers
@@ -196,8 +196,8 @@ See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for a complete walkthrough:
 | `SMTP_HOST` | No | Gmail/other SMTP host (fallback if Brevo not set) |
 | `SMTP_USER` | No | SMTP username |
 | `SMTP_PASS` | No | SMTP password or app password |
-| `OLLAMA_BASE_URL` | No | Ollama endpoint, default `http://localhost:11434` |
-| `OLLAMA_MODEL` | No | Model name, default `ikinamba-ai` |
+| `OLLAMA_BASE_URL` | No | Ollama endpoint, default http://localhost:11434 |
+| `OLLAMA_MODEL` | No | Model name, default ikinamba-ai |
 | `APP_URL` | No | Public URL for email links (auto-detected in dev) |
 | `CLIENT_ORIGIN` | No | Comma-separated CORS origins (auto-detected in dev) |
 | `MOMO_*` | No | MTN MoMo API credentials (sandbox values in .env.example) |
@@ -207,8 +207,8 @@ See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for a complete walkthrough:
 ## Deployment (Render + Railway)
 
 1. Push your code to GitHub
-2. Create a MySQL database on [Railway](https://railway.app) — copy the connection string
-3. Create a **Web Service** on [Render](https://render.com):
+2. Create a MySQL database on Railway (railway.app) - copy the connection string
+3. Create a **Web Service** on Render (render.com):
    - Build command: `npm install && cd apps/server && npx prisma migrate deploy && npm run build`
    - Start command: `node apps/server/dist/index.js`
    - Add all environment variables from `.env` (use the Railway `DATABASE_URL`)
@@ -223,4 +223,4 @@ See **[TESTING_GUIDE.md](TESTING_GUIDE.md)** for a complete walkthrough:
 
 ## License
 
-Academic project — New Class Car Wash, Kigali, Rwanda.
+Academic project - New Class Car Wash, Kigali, Rwanda.
