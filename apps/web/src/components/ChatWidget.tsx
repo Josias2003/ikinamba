@@ -15,12 +15,11 @@ interface ChatMessage {
   display?: ChatDisplay;
 }
 
-type VoicePhase = "off" | "listening" | "thinking" | "speaking" | "reviewing";
+type VoicePhase = "off" | "listening" | "thinking" | "speaking";
 
 const SpeechRecognitionCtor: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 const hasTTS = typeof window !== "undefined" && "speechSynthesis" in window;
 
-/** Strip markdown symbols so the text-to-speech engine reads naturally. */
 function cleanForSpeech(text: string): string {
   return text
     .replace(/\*\*/g, "")
@@ -146,19 +145,14 @@ export function ChatWidget() {
   ]);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
-  const [listening, setListening] = useState(false);   // single-dictate mic mode
+  const [listening, setListening] = useState(false);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("off");
-  const [pendingTranscript, setPendingTranscript] = useState("");
-  const [reviewCountdown, setReviewCountdown] = useState(0);
 
-  const bottomRef    = useRef<HTMLDivElement>(null);
+  const bottomRef     = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
-  const voiceModeRef = useRef(false);   // used inside async callbacks to avoid stale closure
-  const hasResultRef = useRef(false);   // did the current recognition session get speech?
-  const messagesRef  = useRef(messages);
-  messagesRef.current = messages;       // always up-to-date, safe to read inside callbacks
-  const pendingTranscriptRef = useRef(""); // readable inside timer callbacks (avoids stale closure)
-  const reviewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const voiceModeRef  = useRef(false);
+  const messagesRef   = useRef(messages);
+  messagesRef.current = messages;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -166,126 +160,133 @@ export function ChatWidget() {
 
   useEffect(() => {
     return () => {
-      recognitionRef.current?.stop();
+      try { recognitionRef.current?.abort(); recognitionRef.current?.stop(); } catch {}
       window.speechSynthesis?.cancel();
-      if (reviewTimerRef.current) clearInterval(reviewTimerRef.current);
     };
   }, []);
 
   // ── Voice conversation loop ─────────────────────────────────────────────
 
-  function startVoiceListen() {
+  /**
+   * Speaks text aloud and returns a Promise that resolves when the utterance
+   * finishes (or after a 30-second safety timeout so the loop never hangs).
+   */
+  function speakReply(text: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (!hasTTS) { resolve(); return; }
+      window.speechSynthesis.cancel();
+      const utt = new SpeechSynthesisUtterance(cleanForSpeech(text));
+      utt.rate = 1.05;
+      const voices = window.speechSynthesis.getVoices();
+      const preferred =
+        voices.find((v) => v.lang.startsWith("en") && v.localService) ??
+        voices.find((v) => v.lang.startsWith("en"));
+      if (preferred) utt.voice = preferred;
+      const safety = setTimeout(resolve, 30_000);
+      const done = () => { clearTimeout(safety); resolve(); };
+      utt.onend  = done;
+      utt.onerror = done;
+      window.speechSynthesis.speak(utt);
+    });
+  }
+
+  /**
+   * One iteration of the voice loop.
+   * Opens the mic, waits for a single utterance, sends it to the server,
+   * speaks the reply, then calls itself again via setTimeout (no call-stack growth).
+   * Returns immediately if voice mode has been turned off.
+   */
+  function startVoiceLoop() {
     if (!SpeechRecognitionCtor || !voiceModeRef.current) return;
 
     const r = new SpeechRecognitionCtor();
     r.lang = "en-US";
     r.interimResults = false;
     r.continuous = false;
-    hasResultRef.current = false;
+    recognitionRef.current = r;
 
-    r.onresult = (e: any) => {
-      hasResultRef.current = true;
-      const transcript = e.results[0][0].transcript.trim();
+    let gotResult = false;
+
+    r.onresult = async (e: any) => {
+      gotResult = true;
+      const transcript = Array.from(e.results as any)
+        .map((res: any) => (res as any)[0].transcript)
+        .join(" ")
+        .trim();
+
       if (!transcript || !voiceModeRef.current) return;
 
-      // Show the transcript for 3 seconds so the user can correct misrecognised names
-      // before it is sent to the server. Auto-sends if untouched.
-      pendingTranscriptRef.current = transcript;
-      setPendingTranscript(transcript);
-      setReviewCountdown(3);
-      setVoicePhase("reviewing");
+      // Stop the mic immediately so it doesn't keep recording during processing
+      try { r.abort(); } catch {}
 
-      if (reviewTimerRef.current) clearInterval(reviewTimerRef.current);
-      reviewTimerRef.current = setInterval(() => {
-        setReviewCountdown((c) => {
-          if (c <= 1) {
-            clearInterval(reviewTimerRef.current!);
-            reviewTimerRef.current = null;
-            if (voiceModeRef.current) sendVoiceMessage(pendingTranscriptRef.current);
-            return 0;
-          }
-          return c - 1;
-        });
-      }, 1000);
+      setVoicePhase("thinking");
+      window.speechSynthesis?.cancel();
+
+      const userMsg  = { role: "user" as const, content: transcript };
+      const history  = [...messagesRef.current, userMsg];
+      setMessages(history);
+      setPending(true);
+
+      try {
+        const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>(
+          "/ai/chat",
+          { history: history.slice(-20) }
+        );
+        setMessages([...history, { role: "assistant" as const, content: reply, display }]);
+        setPending(false);
+
+        if (!voiceModeRef.current) return;
+        setVoicePhase("speaking");
+        await speakReply(reply);
+
+        if (!voiceModeRef.current) return;
+        // Short gap so the mic doesn't catch the tail end of TTS audio
+        setTimeout(startVoiceLoop, 400);
+      } catch {
+        setPending(false);
+        setMessages((m) => [
+          ...m,
+          { role: "assistant" as const, content: "Sorry, I had a brief technical issue. Please try again." },
+        ]);
+        if (voiceModeRef.current) setTimeout(startVoiceLoop, 1200);
+      }
     };
 
     r.onend = () => {
-      // No speech detected (silence timeout) -- keep listening
-      if (voiceModeRef.current && !hasResultRef.current) {
-        setTimeout(() => { if (voiceModeRef.current) startVoiceListen(); }, 400);
+      // onend fires after onresult (normal) OR when there's silence with no speech.
+      // Only restart if we never got a result (silence timeout).
+      if (!gotResult && voiceModeRef.current) {
+        setTimeout(startVoiceLoop, 300);
       }
     };
 
-    r.onerror = (e: any) => {
-      const retryDelay = e.error === "no-speech" ? 400 : 1500;
-      if (voiceModeRef.current) {
-        setTimeout(() => { if (voiceModeRef.current) startVoiceListen(); }, retryDelay);
-      }
+    r.onerror = (ev: any) => {
+      const delay = ev.error === "no-speech" ? 300 : 1200;
+      if (voiceModeRef.current) setTimeout(startVoiceLoop, delay);
     };
 
-    recognitionRef.current = r;
-    try { r.start(); } catch { /* already started */ }
     setVoicePhase("listening");
-  }
-
-  async function sendVoiceMessage(transcript: string) {
-    if (!voiceModeRef.current) return;
-    setVoicePhase("thinking");
-    window.speechSynthesis.cancel();
-
-    const history = [...messagesRef.current, { role: "user" as const, content: transcript }];
-    setMessages(history);
-    setPending(true);
-
-    try {
-      const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>(
-        "/ai/chat",
-        { history: history.slice(-20) }
-      );
-      setMessages([...history, { role: "assistant" as const, content: reply, display }]);
-
-      if (!voiceModeRef.current) return;
-      setVoicePhase("speaking");
-
-      const utterance = new SpeechSynthesisUtterance(cleanForSpeech(reply));
-      utterance.rate = 1.05;
-      // Prefer a natural local English voice if available
-      const voices = window.speechSynthesis.getVoices();
-      const preferred = voices.find((v) => v.lang.startsWith("en") && v.localService)
-        ?? voices.find((v) => v.lang.startsWith("en"));
-      if (preferred) utterance.voice = preferred;
-
-      utterance.onend   = () => { if (voiceModeRef.current) startVoiceListen(); };
-      utterance.onerror = () => { if (voiceModeRef.current) startVoiceListen(); };
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      setMessages((prev) => [...prev, { role: "assistant" as const, content: "Sorry, I had a brief technical issue. Please try again." }]);
-      if (voiceModeRef.current) {
-        setTimeout(() => { if (voiceModeRef.current) startVoiceListen(); }, 1200);
-      }
-    } finally {
-      setPending(false);
-    }
+    try { r.start(); } catch { setTimeout(startVoiceLoop, 500); }
   }
 
   function toggleVoiceMode() {
     if (voiceModeRef.current) {
       voiceModeRef.current = false;
       setVoicePhase("off");
-      recognitionRef.current?.stop();
-      window.speechSynthesis.cancel();
-      if (reviewTimerRef.current) { clearInterval(reviewTimerRef.current); reviewTimerRef.current = null; }
+      try { recognitionRef.current?.abort(); recognitionRef.current?.stop(); } catch {}
+      window.speechSynthesis?.cancel();
     } else {
       voiceModeRef.current = true;
       setOpen(true);
-      startVoiceListen();
+      startVoiceLoop();
     }
   }
 
-  // ── Single-dictate mic (existing behaviour) ─────────────────────────────
+  // ── Single-dictate mic (fills text input, user reviews and sends manually) ──
 
   function toggleListening() {
     if (listening) { recognitionRef.current?.stop(); return; }
+    if (!SpeechRecognitionCtor) return;
     const r = new SpeechRecognitionCtor();
     r.lang = "en-US";
     r.interimResults = false;
@@ -306,7 +307,10 @@ export function ChatWidget() {
     setInput("");
     setPending(true);
     try {
-      const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>("/ai/chat", { history: history.slice(-20) });
+      const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>(
+        "/ai/chat",
+        { history: history.slice(-20) }
+      );
       setMessages([...history, { role: "assistant", content: reply, display }]);
     } catch {
       setMessages([...history, { role: "assistant", content: "Sorry, something went wrong reaching the assistant." }]);
@@ -378,14 +382,14 @@ export function ChatWidget() {
         {pending && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-xl px-3 py-2 text-sm bg-ink-900 border border-ink-700 text-ink-500 flex items-center gap-2">
-              <Loader2 size={14} className="animate-spin" /> Thinking... (local AI can take up to a minute)
+              <Loader2 size={14} className="animate-spin" /> Thinking...
             </div>
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {/* Bottom: voice status bar OR normal input */}
+      {/* Bottom bar: voice status OR normal input */}
       {voiceOn ? (
         <div className="p-3 border-t border-ink-700 bg-ink-900 flex items-center gap-3">
           {voicePhase === "listening" && (
@@ -401,42 +405,6 @@ export function ChatWidget() {
               <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-3 py-1.5">End</button>
             </>
           )}
-          {voicePhase === "reviewing" && (
-            <div className="flex-1 flex flex-col gap-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-ink-400">I heard (edit if wrong):</span>
-                <span className="text-xs text-ink-500">sending in {reviewCountdown}s</span>
-              </div>
-              <div className="flex gap-2 items-center">
-                <input
-                  className="input flex-1 text-sm py-1"
-                  value={pendingTranscript}
-                  autoFocus
-                  onChange={(e) => {
-                    setPendingTranscript(e.target.value);
-                    pendingTranscriptRef.current = e.target.value;
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      if (reviewTimerRef.current) { clearInterval(reviewTimerRef.current); reviewTimerRef.current = null; }
-                      sendVoiceMessage(pendingTranscriptRef.current);
-                    }
-                  }}
-                />
-                <button
-                  className="btn-primary px-2 py-1 shrink-0"
-                  title="Send now"
-                  onClick={() => {
-                    if (reviewTimerRef.current) { clearInterval(reviewTimerRef.current); reviewTimerRef.current = null; }
-                    sendVoiceMessage(pendingTranscriptRef.current);
-                  }}
-                >
-                  <Send size={14} />
-                </button>
-                <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-2 py-1 shrink-0">End</button>
-              </div>
-            </div>
-          )}
           {voicePhase === "thinking" && (
             <>
               <div className="flex items-center gap-2 flex-1">
@@ -451,7 +419,7 @@ export function ChatWidget() {
               <div className="flex items-center gap-2 flex-1">
                 <Volume2 size={16} className="text-brand-400 animate-pulse" />
                 <span className="text-sm text-brand-400 font-medium">Speaking...</span>
-                <span className="text-xs text-ink-500">(say your reply when done)</span>
+                <span className="text-xs text-ink-500">(speak your reply when done)</span>
               </div>
               <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-3 py-1.5">End</button>
             </>
