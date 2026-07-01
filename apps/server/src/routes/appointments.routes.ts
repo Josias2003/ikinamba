@@ -51,7 +51,7 @@ appointmentsRouter.get(
 const bookSchema = z.object({
   customerId: z.string().optional(),
   // Inline customer creation supports the public booking widget (no login required to book).
-  customer: z.object({ name: z.string(), phone: z.string(), email: z.string().email().optional() }).optional(),
+  customer: z.object({ name: z.string(), phone: z.string(), email: z.string().email() }).optional(),
   vehicleId: z.string().optional(),
   vehicle: z
     .object({ make: z.string(), model: z.string(), year: z.number(), plate: z.string(), color: z.string().optional() })

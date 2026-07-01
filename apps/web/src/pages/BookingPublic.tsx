@@ -11,8 +11,20 @@ interface Slot { start: string; bookedCount: number; available: boolean }
 /** Optional pay-at-booking via MoMo -- never blocks the booking itself, which is already
  * confirmed by the time this renders. Skipping or a failed charge both just mean paying
  * at pickup as usual. */
+const isMtnMomo  = (p: string) => /^07[89]\d{7}$/.test(p.replace(/\s/g, ""));
+const isAirtel   = (p: string) => /^07[23]\d{7}$/.test(p.replace(/\s/g, ""));
+const isValidMomoPhone = (p: string) => isMtnMomo(p) || isAirtel(p);
+
+function momoPhoneHint(p: string): string | null {
+  if (!p) return null;
+  if (isMtnMomo(p))  return null;
+  if (isAirtel(p))   return "Airtel numbers (072/073) are not supported for MoMo — please use an MTN number (078/079).";
+  return "MoMo requires a valid MTN number starting with 078 or 079 (10 digits).";
+}
+
 function MomoPaySection({ appointmentId, defaultPhone, total }: { appointmentId: string; defaultPhone: string; total: number }) {
   const [phone, setPhone] = useState(defaultPhone);
+  const hint = momoPhoneHint(phone);
   const payMutation = useMutation({
     mutationFn: () => api.post(`/appointments/${appointmentId}/pay`, { phoneNumber: phone }, { auth: false }),
   });
@@ -20,7 +32,7 @@ function MomoPaySection({ appointmentId, defaultPhone, total }: { appointmentId:
   if (payMutation.isSuccess) {
     return (
       <div className="border-t border-ink-800 pt-4 text-sm text-brand-300 flex items-center gap-2 justify-center">
-        <CheckCircle2 size={16} /> Paid via MoMo -- you're all set, no need to pay at pickup.
+        <CheckCircle2 size={16} /> Paid via MoMo — you're all set, no need to pay at pickup.
       </div>
     );
   }
@@ -31,26 +43,27 @@ function MomoPaySection({ appointmentId, defaultPhone, total }: { appointmentId:
         <Smartphone size={15} className="text-brand-400" /> Pay with MoMo now (optional)
       </p>
       <p className="text-xs text-ink-400">
-        Estimated total RWF {total.toLocaleString()}. You can skip this and pay at pickup instead.
+        Estimated total RWF {total.toLocaleString()}. MTN numbers only (078/079). You can skip and pay at pickup instead.
       </p>
       <div className="flex gap-2">
         <input
           className="input"
-          placeholder="MoMo phone number"
+          placeholder="e.g. 0788123456"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
         />
         <button
           className="btn-primary whitespace-nowrap"
-          disabled={!phone || payMutation.isPending}
+          disabled={!isMtnMomo(phone) || payMutation.isPending}
           onClick={() => payMutation.mutate()}
         >
           {payMutation.isPending && <Loader2 size={14} className="animate-spin" />} Pay
         </button>
       </div>
+      {hint && <p className="text-xs text-amber-400">{hint}</p>}
       {payMutation.isError && (
         <p className="alert-danger text-xs">
-          {payMutation.error instanceof ApiError ? payMutation.error.message : "MoMo payment failed"} -- you can still pay at pickup.
+          {payMutation.error instanceof ApiError ? payMutation.error.message : "MoMo payment failed"} — you can still pay at pickup.
         </p>
       )}
     </div>
@@ -157,7 +170,7 @@ export function BookingPublic() {
           <div className="relative">
             <input
               className="input w-full"
-              placeholder="Email address"
+              placeholder="Email address (required — confirmation sent here)"
               type="email"
               value={customer.email}
               onChange={(e) => { setCustomer({ ...customer, email: e.target.value }); setReturning(null); }}
@@ -256,7 +269,7 @@ export function BookingPublic() {
 
         <button
           className="btn-primary w-full py-3"
-          disabled={!slot || !selectedItems.length || !customer.name || !customer.phone || !vehicle.plate || bookMutation.isPending}
+          disabled={!slot || !selectedItems.length || !customer.name || !customer.phone || !customer.email || !vehicle.plate || bookMutation.isPending}
           onClick={() => bookMutation.mutate()}
         >
           {bookMutation.isPending && <Loader2 size={16} className="animate-spin" />} Confirm booking
