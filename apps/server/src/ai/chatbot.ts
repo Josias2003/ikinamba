@@ -44,7 +44,20 @@ interface ChatHistoryItem {
   display?: { type: string; data: unknown };
 }
 
-const AFFIRMATIVE = /^\s*(yes|yeah|yep|yup|confirm(ed)?|correct|that'?s right|go ahead|book it|sure|ok(ay)?)\b/i;
+const AFFIRMATIVE = /^\s*(yes|yeah|yep|yup|confirm(ed)?|correct|that'?s right|go ahead|book it|sure|ok(ay)?)\b/i
+
+/** Remove markdown formatting the small local model sometimes adds despite instructions.
+ * Bullet lists become plain lines; bold/italic markers are stripped. */
+function stripMarkdown(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")   // **bold** -> bold
+    .replace(/\*([^*\n]+)\*/g, "$1")      // *italic* -> italic
+    .replace(/^#{1,6}\s+/gm, "")          // # headings
+    .replace(/^[-*]\s+/gm, "")            // bullet list markers
+    .replace(/`([^`]+)`/g, "$1")          // `inline code`
+    .replace(/\n{3,}/g, "\n\n")           // collapse excessive blank lines
+    .trim();
+};
 
 const VEHICLE_MAKES = [
   "Toyota", "Honda", "BMW", "Mercedes", "Volkswagen", "VW", "Kia", "Hyundai",
@@ -111,24 +124,33 @@ function extractBookingFields(
   const allUserText = userMsgs.join("\n");
 
   // Rwandan plate (most recent mention -- user may correct)
+  // Handles both compact "RAB123A" and spaced "RAB 123 A" formats
   let plate: string | undefined;
   for (const msg of reversed) {
-    const m = msg.match(/\b([A-Za-z]{2,3}\d{2,4}[A-Za-z]{1,2})\b/);
-    if (m) { plate = m[1].toUpperCase(); break; }
+    const spaced = msg.match(/\b([A-Za-z]{2,3})\s+(\d{2,4})\s+([A-Za-z]{1,2})\b/);
+    if (spaced) { plate = `${spaced[1]}${spaced[2]}${spaced[3]}`.toUpperCase(); break; }
+    const compact = msg.match(/\b([A-Za-z]{2,3}\d{2,4}[A-Za-z]{1,2})\b/);
+    if (compact) { plate = compact[1].toUpperCase(); break; }
   }
 
-  // Phone (most recent)
+  // Phone (most recent) -- strip dashes/spaces first so "078-078-7811" and "078 078 7811" both match
   let phone: string | undefined;
   for (const msg of reversed) {
-    const m = msg.match(/\b(07\d{8}|2507\d{8})\b/);
+    const digits = msg.replace(/[\s\-]/g, "");
+    const m = digits.match(/(07\d{8}|2507\d{8})/);
     if (m) { phone = m[1]; break; }
   }
 
-  // Email (most recent)
+  // Email (most recent) -- handles typed "a@b.com" and voice "a at b.com" / "a at b dot com"
   let email: string | undefined;
   for (const msg of reversed) {
-    const m = msg.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
-    if (m) { email = m[1]; break; }
+    // Standard typed email
+    const typed = msg.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
+    if (typed) { email = typed[1]; break; }
+    // Voice: "zachary at gmail dot com" or "zachary at gmail.com"
+    const normalised = msg.replace(/\s+dot\s+/gi, ".");
+    const spoken = normalised.match(/\b([a-zA-Z0-9._+\-]+)\s+at\s+([a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/i);
+    if (spoken) { email = `${spoken[1]}@${spoken[2]}`; break; }
   }
 
   // Name: try multiple patterns across all user messages, prefer most recent match
@@ -394,14 +416,15 @@ Keep answers short (2-4 sentences). Output plain text only -- no markdown, no as
           ? { reply: outcome.summary, display: outcome.display }
           : { reply: outcome.message };
       }
+      // Model fake-confirmed but fields are still missing -- ask only for what's outstanding
       return {
         reply:
           missing.length === 1
-            ? `Before I can confirm that, I still need ${missing[0]}.`
-            : `Before I can confirm that, I still need: ${missing.join(", ")}.`,
+            ? `I still need your ${missing[0]} before I can book that. Could you share it?`
+            : `I still need a couple of things to finish the booking: ${missing.join(", ")}.`,
       };
     }
-    return { reply: result.content };
+    return { reply: stripMarkdown(result.content) };
   }
 
   // Pre-flight: if the model calls book_appointment with fields still missing, catch it
