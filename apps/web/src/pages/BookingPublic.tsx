@@ -57,6 +57,8 @@ function MomoPaySection({ appointmentId, defaultPhone, total }: { appointmentId:
   );
 }
 
+interface LookupResult { found: boolean; name?: string; phone?: string; vehicles?: { make: string; model: string; year: number; plate: string; color?: string }[] }
+
 export function BookingPublic() {
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [slot, setSlot] = useState("");
@@ -64,6 +66,37 @@ export function BookingPublic() {
   const [customer, setCustomer] = useState({ name: "", phone: "", email: "" });
   const [vehicle, setVehicle] = useState({ make: "", model: "", year: 2020, plate: "", color: "" });
   const [confirmation, setConfirmation] = useState<any>(null);
+  const [returning, setReturning] = useState<{ name: string; vehicles: LookupResult["vehicles"] } | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
+
+  async function handleEmailBlur() {
+    const email = customer.email.trim();
+    if (!email || !email.includes("@")) return;
+    setLookingUp(true);
+    try {
+      const base = (import.meta.env.VITE_API_URL as string | undefined) ?? "";
+      const res = await fetch(`${base}/api/appointments/customer-lookup?email=${encodeURIComponent(email)}`);
+      const data: LookupResult = await res.json();
+      if (data.found && data.name) {
+        setCustomer((c) => ({ ...c, name: c.name || data.name!, phone: c.phone || data.phone! }));
+        if (data.vehicles?.length === 1) {
+          const v = data.vehicles[0];
+          setVehicle((prev) => ({
+            make:  prev.make  || v.make,
+            model: prev.model || v.model,
+            year:  prev.year !== 2020 ? prev.year : v.year,
+            plate: prev.plate || v.plate,
+            color: prev.color || v.color || "",
+          }));
+        }
+        setReturning({ name: data.name, vehicles: data.vehicles });
+      } else {
+        setReturning(null);
+      }
+    } finally {
+      setLookingUp(false);
+    }
+  }
 
   const { data: catalog } = useQuery({ queryKey: ["catalog"], queryFn: () => api.get<CatalogItem[]>("/catalog", { auth: false }) });
   const { data: slots } = useQuery({
@@ -159,11 +192,58 @@ export function BookingPublic() {
 
         <div className="card space-y-3">
           <h3 className="font-semibold text-ink-200">3. Your details</h3>
+
+          {/* Email first -- triggers returning-customer lookup on blur */}
+          <div className="relative">
+            <input
+              className="input w-full"
+              placeholder="Email address"
+              type="email"
+              value={customer.email}
+              onChange={(e) => { setCustomer({ ...customer, email: e.target.value }); setReturning(null); }}
+              onBlur={handleEmailBlur}
+            />
+            {lookingUp && <Loader2 size={14} className="animate-spin absolute right-3 top-3 text-ink-400" />}
+          </div>
+
+          {/* Welcome banner for returning customers */}
+          {returning && (
+            <div className="flex items-center gap-2 text-sm bg-brand-500/10 border border-brand-500/30 rounded px-3 py-2 text-brand-300">
+              <CheckCircle2 size={15} /> Welcome back, {returning.name}! We've filled in your details.
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <input className="input" placeholder="Full name" value={customer.name} onChange={(e) => setCustomer({ ...customer, name: e.target.value })} />
             <input className="input" placeholder="Phone" value={customer.phone} onChange={(e) => setCustomer({ ...customer, phone: e.target.value })} />
-            <input className="input col-span-2" placeholder="Email (optional)" value={customer.email} onChange={(e) => setCustomer({ ...customer, email: e.target.value })} />
           </div>
+
+          {/* If multiple vehicles on file, let them pick one */}
+          {returning?.vehicles && returning.vehicles.length > 1 && (
+            <div>
+              <p className="text-xs text-ink-400 mb-1">Which vehicle are you bringing?</p>
+              <div className="flex flex-wrap gap-2">
+                {returning.vehicles.map((v) => (
+                  <button
+                    key={v.plate}
+                    type="button"
+                    onClick={() => setVehicle({ make: v.make, model: v.model, year: v.year, plate: v.plate, color: v.color || "" })}
+                    className={`text-xs px-3 py-1.5 rounded border ${vehicle.plate === v.plate ? "border-brand-500 bg-brand-500/10 text-brand-300" : "border-ink-700 text-ink-400"}`}
+                  >
+                    {v.make} {v.model} · {v.plate}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setVehicle({ make: "", model: "", year: 2020, plate: "", color: "" })}
+                  className="text-xs px-3 py-1.5 rounded border border-ink-700 text-ink-400"
+                >
+                  New car
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <input className="input" placeholder="Vehicle make" value={vehicle.make} onChange={(e) => setVehicle({ ...vehicle, make: e.target.value })} />
             <input className="input" placeholder="Vehicle model" value={vehicle.model} onChange={(e) => setVehicle({ ...vehicle, model: e.target.value })} />

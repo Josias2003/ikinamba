@@ -21,6 +21,33 @@ appointmentsRouter.get(
   })
 );
 
+// Public: look up a returning customer by email to pre-fill the booking form.
+// Returns only the fields needed for the form -- no sensitive billing or loyalty data.
+appointmentsRouter.get(
+  "/customer-lookup",
+  asyncHandler(async (req, res) => {
+    const email = (req.query.email as string | undefined)?.trim().toLowerCase();
+    if (!email) return res.json({ found: false });
+
+    const customer = await prisma.customer.findFirst({
+      where: { email },
+      select: {
+        name: true,
+        phone: true,
+        email: true,
+        vehicles: {
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          select: { make: true, model: true, year: true, plate: true, color: true },
+        },
+      },
+    });
+
+    if (!customer) return res.json({ found: false });
+    res.json({ found: true, name: customer.name, phone: customer.phone, vehicles: customer.vehicles });
+  })
+);
+
 const bookSchema = z.object({
   customerId: z.string().optional(),
   // Inline customer creation supports the public booking widget (no login required to book).
