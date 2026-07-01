@@ -271,6 +271,125 @@ function missingBookingFields(args: Record<string, unknown>): string[] {
   return missing;
 }
 
+// --- Booking conductor helpers ---
+
+// Patterns used to count how many times the bot already asked for each field.
+// We require a "?" so general mentions (e.g. "services start at RWF 2000") don't count.
+const FIELD_ASK_PATTERNS: Record<string, RegExp> = {
+  "your full name": /\bname\b/i,
+  "your phone number": /\b(phone|contact)\b/i,
+  "your email address": /\bemail\b/i,
+  "the vehicle make and model": /\b(make|model)\b/i,
+  "the license plate number": /\bplate\b/i,
+  "which service(s) you want": /\bservice\b/i,
+  "the preferred date and time": /\b(date|time|when)\b/i,
+};
+
+function countFieldAsks(history: ChatHistoryItem[], fieldLabel: string): number {
+  const pat = FIELD_ASK_PATTERNS[fieldLabel];
+  if (!pat) return 0;
+  return history.filter((h) => h.role === "assistant" && pat.test(h.content) && h.content.includes("?")).length;
+}
+
+function firstAskForField(fieldLabel: string, services: { name: string }[]): string {
+  switch (fieldLabel) {
+    case "your full name":
+      return "Could I get your full name for the booking?";
+    case "your phone number":
+      return "What is your phone number?";
+    case "your email address":
+      return "What is your email address? I will send the confirmation and QR code there.";
+    case "the vehicle make and model":
+      return "What make and model is your vehicle? For example, Toyota Corolla.";
+    case "the license plate number":
+      return "What is the license plate number on the vehicle?";
+    case "which service(s) you want": {
+      const list = services.map((s) => s.name).join(", ");
+      return `Which service would you like? We offer: ${list}.`;
+    }
+    case "the preferred date and time":
+      return "When would you like to come in? For example, Friday at 10am.";
+    default:
+      return `Could you tell me ${fieldLabel}?`;
+  }
+}
+
+function retryAskForField(fieldLabel: string, attemptNumber: number): string {
+  const friendlyNames: Record<string, string> = {
+    "your full name": "full name",
+    "your phone number": "phone number",
+    "your email address": "email address",
+    "the vehicle make and model": "vehicle make and model",
+    "the license plate number": "plate number",
+    "which service(s) you want": "service choice",
+    "the preferred date and time": "preferred date and time",
+  };
+  const fname = friendlyNames[fieldLabel] ?? fieldLabel;
+
+  // Plate is the hardest field for voice -- suggest typing after the first retry
+  if (fieldLabel === "the license plate number") {
+    return "Could you type your plate number? For example: RAB 123 A. It is easier than spelling it aloud.";
+  }
+  // Email: add pronunciation guidance on the first retry
+  if (fieldLabel === "your email address" && attemptNumber === 1) {
+    return 'Sorry, I did not catch that. Could you say your email like "name at gmail dot com"?';
+  }
+  if (attemptNumber === 1) {
+    return `Sorry, I did not catch that. Could you repeat your ${fname}?`;
+  }
+  return `Could you type your ${fname}? That way I will not miss it.`;
+}
+
+/**
+ * Booking conductor: handles every booking-flow turn with instant template responses,
+ * bypassing the LLM entirely. Returns null for non-booking messages so they fall
+ * through to the LLM as normal. Eliminates the 50-second cold-start wait during booking
+ * and guarantees exactly one field is asked per turn with automatic retry logic.
+ */
+async function conductBooking(
+  history: ChatHistoryItem[],
+  services: { name: string }[],
+  role?: Role
+): Promise<ChatbotReply | null> {
+  const lastUser = history[history.length - 1];
+  if (lastUser?.role !== "user") return null;
+
+  // Affirmatives ("yes", "confirm", etc.) are handled by SHORTCUT 1/2 above
+  if (AFFIRMATIVE.test(lastUser.content)) return null;
+
+  // Only activate when the conversation has explicit booking intent
+  const hasBookingIntent = history.some(
+    (h) => h.role === "user" && /\b(book|appointment|schedule|reserve)\b/i.test(h.content)
+  );
+  if (!hasBookingIntent) return null;
+
+  // Let the LLM handle FAQ/info questions asked mid-booking-flow
+  const isInfoQuestion = /\b(how much|what (services?|is|are)|price|cost|how long|opening hours?|do you (have|offer)|can i|is it possible)\b/i.test(
+    lastUser.content
+  );
+  if (isInfoQuestion) return null;
+
+  const raw = extractBookingFields(history, services);
+  const { fields: collected } = await enrichWithReturningCustomer(raw);
+  const missing = missingBookingFields(collected);
+
+  // All fields present - fire the booking preview immediately, no LLM needed
+  if (!missing.length) {
+    const outcome = await executeTool("book_appointment", { ...collected, confirmed: false }, role);
+    return outcome.ok
+      ? { reply: outcome.summary, display: outcome.display }
+      : { reply: outcome.message };
+  }
+
+  // Ask for the next missing field, with retry/give-up logic
+  const nextField = missing[0];
+  const askCount = countFieldAsks(history, nextField);
+  const reply = askCount === 0
+    ? firstAskForField(nextField, services)
+    : retryAskForField(nextField, askCount);
+  return { reply };
+}
+
 /** Booking/FAQ assistant grounded with real service catalog + bay data pulled from the DB,
  * so it can't hallucinate prices/services that don't exist. When called by a logged-in
  * staff member (role passed in), it's additionally grounded with operational data scoped
@@ -338,6 +457,12 @@ export async function askChatbot(history: ChatHistoryItem[], role?: Role): Promi
     prisma.serviceCatalogItem.findMany({ where: { isActive: true } }),
     prisma.bay.findMany(),
   ]);
+
+  // CONDUCTOR: bypass the LLM for booking field collection -- instant template responses,
+  // one field per turn, automatic retry logic. Returns null for non-booking turns so they
+  // fall through to the LLM as normal.
+  const conductorReply = await conductBooking(history, services, role);
+  if (conductorReply) return conductorReply;
 
   const catalogText = services
     .map((s) => `- ${s.name} (${s.category}): RWF ${s.basePrice.toLocaleString()}, ~${s.durationMinutes} min`)

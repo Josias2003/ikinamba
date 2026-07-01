@@ -46,6 +46,7 @@ export async function chatWithLocalAI(
         model: env.ollama.model,
         messages,
         stream: false,
+        keep_alive: "10m",
         options: { temperature: opts.temperature ?? 0.4 },
         ...(opts.tools ? { tools: opts.tools } : {}),
       }),
