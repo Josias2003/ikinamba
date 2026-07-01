@@ -193,6 +193,46 @@ function extractBookingFields(
   };
 }
 
+/** Look up a returning customer by email or phone and merge their stored data into
+ * the extracted fields so the model doesn't ask for info it already has.
+ * Returns the enriched fields plus a system-prompt block telling the model what's
+ * pre-filled and what it must NOT ask for again. */
+async function enrichWithReturningCustomer(
+  fields: Record<string, unknown>
+): Promise<{ fields: Record<string, unknown>; customerBlock: string | null }> {
+  const email = fields.email as string | undefined;
+  const phone = fields.phone as string | undefined;
+  if (!email && !phone) return { fields, customerBlock: null };
+
+  const customer = await prisma.customer.findFirst({
+    where: email ? { email } : { phone: phone! },
+    include: { vehicles: { orderBy: { createdAt: "desc" }, take: 5 } },
+  });
+  if (!customer) return { fields, customerBlock: null };
+
+  const enriched: Record<string, unknown> = { ...fields };
+  enriched.customerName = enriched.customerName ?? customer.name;
+  enriched.phone       = enriched.phone       ?? customer.phone;
+  enriched.email       = enriched.email       ?? customer.email ?? email;
+
+  let block = `RETURNING CUSTOMER — ${customer.name} (${customer.phone}${customer.email ? ", " + customer.email : ""}).`;
+
+  if (customer.vehicles.length === 1 && !enriched.plate) {
+    const v = customer.vehicles[0];
+    enriched.vehicleMake  = v.make;
+    enriched.vehicleModel = v.model;
+    enriched.plate        = v.plate;
+    block += ` One vehicle on file: ${v.make} ${v.model} (${v.plate}). Do NOT ask for name, phone, email, make, model, or plate — they are already known. Only ask for the service(s) wanted and the preferred date/time.`;
+  } else if (customer.vehicles.length > 1) {
+    const list = customer.vehicles.map((v) => `${v.make} ${v.model} (${v.plate})`).join(", ");
+    block += ` Vehicles on file: ${list}. Do NOT ask for name, phone, or email. Ask which vehicle they are bringing today, or whether it is a new car.`;
+  } else {
+    block += ` No vehicle on file yet. Do NOT ask for name, phone, or email again. Ask for their vehicle details and desired service.`;
+  }
+
+  return { fields: enriched, customerBlock: block };
+}
+
 function missingBookingFields(args: Record<string, unknown>): string[] {
   const missing: string[] = [];
   if (!args.customerName) missing.push("your full name");
@@ -247,7 +287,8 @@ export async function askChatbot(history: ChatHistoryItem[], role?: Role): Promi
       );
     if (summaryLike) {
       const svcs = await prisma.serviceCatalogItem.findMany({ where: { isActive: true } });
-      const extracted = extractBookingFields(history, svcs);
+      const raw = extractBookingFields(history, svcs);
+      const { fields: extracted } = await enrichWithReturningCustomer(raw);
       const missing = missingBookingFields(extracted);
       if (!missing.length) {
         const outcome = await executeTool(
@@ -310,7 +351,9 @@ Keep answers short (2-4 sentences). Output plain text only -- no markdown, no as
     (h) => h.role === "user" && /\b(book|appointment|wash|service|vehicle|car)\b/i.test(h.content)
   );
   if (inBookingFlow) {
-    const alreadyCollected = extractBookingFields(history, services);
+    const raw = extractBookingFields(history, services);
+    const { fields: alreadyCollected, customerBlock } = await enrichWithReturningCustomer(raw);
+    if (customerBlock) systemPrompt += `\n\n${customerBlock}`;
     const stillMissing = missingBookingFields(alreadyCollected);
     if (stillMissing.length) {
       systemPrompt += `\n\nFIELDS STILL NEEDED (do NOT call the tool yet, ask for these first, one at a time): ${stillMissing.join(", ")}.`;
@@ -338,9 +381,8 @@ Keep answers short (2-4 sentences). Output plain text only -- no markdown, no as
       ) && !/\bshall i book|shall i confirm|can i confirm|want me to book\b/.test(lower);
 
     if (looksLikeFakeConfirm) {
-      // Check what's actually missing from the conversation instead of blindly asking for plate.
-      // If everything is in the history, call the tool properly rather than looping.
-      const extracted = extractBookingFields(history, services);
+      const raw = extractBookingFields(history, services);
+      const { fields: extracted } = await enrichWithReturningCustomer(raw);
       const missing = missingBookingFields(extracted);
       if (!missing.length) {
         const outcome = await executeTool(
