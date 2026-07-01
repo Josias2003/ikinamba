@@ -151,47 +151,7 @@ export function BookingPublic() {
         </div>
 
         <div className="card space-y-3">
-          <h3 className="font-semibold text-ink-200">1. Choose services</h3>
-          <div className="grid grid-cols-2 gap-2">
-            {catalog?.map((item) => (
-              <label key={item.id} className={`flex items-center justify-between border rounded-sm px-3 py-2 text-sm cursor-pointer ${selectedItems.includes(item.id) ? "border-brand-500 bg-brand-500/10" : "border-ink-700"}`}>
-                <span>
-                  <input
-                    type="checkbox"
-                    className="mr-2"
-                    checked={selectedItems.includes(item.id)}
-                    onChange={(e) =>
-                      setSelectedItems(e.target.checked ? [...selectedItems, item.id] : selectedItems.filter((id) => id !== item.id))
-                    }
-                  />
-                  {item.name}
-                </span>
-                <span className="text-ink-500">RWF {item.basePrice.toLocaleString()}</span>
-              </label>
-            ))}
-          </div>
-          {total > 0 && <p className="text-sm text-ink-400">Estimated total: <strong>RWF {total.toLocaleString()}</strong></p>}
-        </div>
-
-        <div className="card space-y-3">
-          <h3 className="font-semibold text-ink-200">2. Pick a date &amp; time</h3>
-          <input className="input max-w-xs" type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(e) => setDate(e.target.value)} />
-          <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
-            {slots?.map((s) => (
-              <button
-                key={s.start}
-                disabled={!s.available}
-                onClick={() => setSlot(s.start)}
-                className={`text-xs px-2 py-1.5 ${slot === s.start ? "btn-primary" : "btn-secondary"}`}
-              >
-                {new Date(s.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="card space-y-3">
-          <h3 className="font-semibold text-ink-200">3. Your details</h3>
+          <h3 className="font-semibold text-ink-200">1. Your details</h3>
 
           {/* Email first -- triggers returning-customer lookup on blur */}
           <div className="relative">
@@ -249,6 +209,46 @@ export function BookingPublic() {
             <input className="input" placeholder="Vehicle model" value={vehicle.model} onChange={(e) => setVehicle({ ...vehicle, model: e.target.value })} />
             <input className="input" placeholder="Plate number" value={vehicle.plate} onChange={(e) => setVehicle({ ...vehicle, plate: e.target.value })} />
             <input className="input" type="number" placeholder="Year" min={1980} max={new Date().getFullYear() + 1} value={vehicle.year} onChange={(e) => setVehicle({ ...vehicle, year: Number(e.target.value) })} />
+          </div>
+        </div>
+
+        <div className="card space-y-3">
+          <h3 className="font-semibold text-ink-200">2. Choose services</h3>
+          <div className="grid grid-cols-2 gap-2">
+            {catalog?.map((item) => (
+              <label key={item.id} className={`flex items-center justify-between border rounded-sm px-3 py-2 text-sm cursor-pointer ${selectedItems.includes(item.id) ? "border-brand-500 bg-brand-500/10" : "border-ink-700"}`}>
+                <span>
+                  <input
+                    type="checkbox"
+                    className="mr-2"
+                    checked={selectedItems.includes(item.id)}
+                    onChange={(e) =>
+                      setSelectedItems(e.target.checked ? [...selectedItems, item.id] : selectedItems.filter((id) => id !== item.id))
+                    }
+                  />
+                  {item.name}
+                </span>
+                <span className="text-ink-500">RWF {item.basePrice.toLocaleString()}</span>
+              </label>
+            ))}
+          </div>
+          {total > 0 && <p className="text-sm text-ink-400">Estimated total: <strong>RWF {total.toLocaleString()}</strong></p>}
+        </div>
+
+        <div className="card space-y-3">
+          <h3 className="font-semibold text-ink-200">3. Pick a date &amp; time</h3>
+          <input className="input max-w-xs" type="date" min={new Date().toISOString().slice(0, 10)} value={date} onChange={(e) => setDate(e.target.value)} />
+          <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
+            {slots?.map((s) => (
+              <button
+                key={s.start}
+                disabled={!s.available}
+                onClick={() => setSlot(s.start)}
+                className={`text-xs px-2 py-1.5 ${slot === s.start ? "btn-primary" : "btn-secondary"}`}
+              >
+                {new Date(s.start).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </button>
+            ))}
           </div>
         </div>
 
