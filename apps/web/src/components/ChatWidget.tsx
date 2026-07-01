@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer } from "recharts";
-import { MessageCircle, X, Send, Bot, Loader2, Mic } from "lucide-react";
+import { MessageCircle, X, Send, Bot, Loader2, Mic, MicOff, Volume2, Phone } from "lucide-react";
 import { api } from "../lib/api";
 import { TrackingQrCard } from "./TrackingQrCard";
 import { useTheme } from "../context/ThemeContext";
@@ -15,11 +15,23 @@ interface ChatMessage {
   display?: ChatDisplay;
 }
 
-// Not in the standard DOM lib types -- browser-native Web Speech API, Chrome/Edge only.
-const SpeechRecognitionCtor: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+type VoicePhase = "off" | "listening" | "thinking" | "speaking";
 
-/** Renders the structured result of a chatbot tool call (booking confirmation, a live
- * chart, queue status) inline in the chat bubble, instead of just narrating it in text. */
+const SpeechRecognitionCtor: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+const hasTTS = typeof window !== "undefined" && "speechSynthesis" in window;
+
+/** Strip markdown symbols so the text-to-speech engine reads naturally. */
+function cleanForSpeech(text: string): string {
+  return text
+    .replace(/\*\*/g, "")
+    .replace(/[*#`_]/g, "")
+    .replace(/\bRWF\b/g, "Rwandan francs")
+    .replace(/\bQR\b/g, "Q R code")
+    .replace(/https?:\/\/\S+/g, "the link")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
   const { theme } = useTheme();
   const tickFill = theme === "dark" ? "#9aa7ae" : "#566873";
@@ -69,20 +81,12 @@ function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
   }
   if (display.type === "vehicleStatus") {
     const STATUS_COLOR: Record<string, string> = {
-      WAITING:       "badge-warn",
-      IN_SERVICE:    "badge-live",
-      QUALITY_CHECK: "badge-live",
-      READY:         "badge-success",
-      BOOKED:        "badge-neutral",
-      COMPLETED:     "badge-neutral",
+      WAITING: "badge-warn", IN_SERVICE: "badge-live", QUALITY_CHECK: "badge-live",
+      READY: "badge-success", BOOKED: "badge-neutral", COMPLETED: "badge-neutral",
     };
     const STATUS_LABEL: Record<string, string> = {
-      WAITING:       "Waiting in queue",
-      IN_SERVICE:    "In service",
-      QUALITY_CHECK: "Quality check",
-      READY:         "Ready for pickup",
-      BOOKED:        "Appointment booked",
-      COMPLETED:     "Completed",
+      WAITING: "Waiting in queue", IN_SERVICE: "In service", QUALITY_CHECK: "Quality check",
+      READY: "Ready for pickup", BOOKED: "Appointment booked", COMPLETED: "Completed",
     };
     return (
       <div className="mt-2 border border-ink-700 rounded-sm p-2 text-xs text-ink-300 space-y-1">
@@ -93,9 +97,7 @@ function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
           {display.data.bay && <span className="text-ink-400">Bay: <strong>{display.data.bay}</strong></span>}
         </div>
         <div><span className="text-ink-500">Vehicle:</span> {display.data.vehicle.make} {display.data.vehicle.model} ({display.data.plate})</div>
-        {display.data.services?.length > 0 && (
-          <div><span className="text-ink-500">Services:</span> {display.data.services.join(", ")}</div>
-        )}
+        {display.data.services?.length > 0 && <div><span className="text-ink-500">Services:</span> {display.data.services.join(", ")}</div>}
         {display.data.scheduledAt && (
           <div><span className="text-ink-500">Appointment:</span> {new Date(display.data.scheduledAt).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>
         )}
@@ -137,9 +139,6 @@ function ChatDisplayPanel({ display }: { display: ChatDisplay }) {
   return null;
 }
 
-/** Floating AI assistant available everywhere (public pages too -- /api/ai/chat needs no auth).
- * Local CPU inference is slow (tens of seconds), so the loading state is front-and-center
- * rather than implying an instant reply. */
 export function ChatWidget() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -147,29 +146,132 @@ export function ChatWidget() {
   ]);
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
-  const [listening, setListening] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const [listening, setListening] = useState(false);   // single-dictate mic mode
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>("off");
+
+  const bottomRef    = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const voiceModeRef = useRef(false);   // used inside async callbacks to avoid stale closure
+  const hasResultRef = useRef(false);   // did the current recognition session get speech?
+  const messagesRef  = useRef(messages);
+  messagesRef.current = messages;       // always up-to-date, safe to read inside callbacks
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, pending]);
 
-  function toggleListening() {
-    if (listening) {
+  useEffect(() => {
+    return () => {
       recognitionRef.current?.stop();
-      return;
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+
+  // ── Voice conversation loop ─────────────────────────────────────────────
+
+  function startVoiceListen() {
+    if (!SpeechRecognitionCtor || !voiceModeRef.current) return;
+
+    const r = new SpeechRecognitionCtor();
+    r.lang = "en-US";
+    r.interimResults = false;
+    r.continuous = false;
+    hasResultRef.current = false;
+
+    r.onresult = (e: any) => {
+      hasResultRef.current = true;
+      const transcript = e.results[0][0].transcript.trim();
+      if (transcript) sendVoiceMessage(transcript);
+    };
+
+    r.onend = () => {
+      // No speech detected (silence timeout) -- keep listening
+      if (voiceModeRef.current && !hasResultRef.current) {
+        setTimeout(() => { if (voiceModeRef.current) startVoiceListen(); }, 400);
+      }
+    };
+
+    r.onerror = (e: any) => {
+      const retryDelay = e.error === "no-speech" ? 400 : 1500;
+      if (voiceModeRef.current) {
+        setTimeout(() => { if (voiceModeRef.current) startVoiceListen(); }, retryDelay);
+      }
+    };
+
+    recognitionRef.current = r;
+    try { r.start(); } catch { /* already started */ }
+    setVoicePhase("listening");
+  }
+
+  async function sendVoiceMessage(transcript: string) {
+    if (!voiceModeRef.current) return;
+    setVoicePhase("thinking");
+    window.speechSynthesis.cancel();
+
+    const history = [...messagesRef.current, { role: "user" as const, content: transcript }];
+    setMessages(history);
+    setPending(true);
+
+    try {
+      const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>(
+        "/ai/chat",
+        { history: history.slice(-10) }
+      );
+      setMessages([...history, { role: "assistant" as const, content: reply, display }]);
+
+      if (!voiceModeRef.current) return;
+      setVoicePhase("speaking");
+
+      const utterance = new SpeechSynthesisUtterance(cleanForSpeech(reply));
+      utterance.rate = 1.05;
+      // Prefer a natural local English voice if available
+      const voices = window.speechSynthesis.getVoices();
+      const preferred = voices.find((v) => v.lang.startsWith("en") && v.localService)
+        ?? voices.find((v) => v.lang.startsWith("en"));
+      if (preferred) utterance.voice = preferred;
+
+      utterance.onend   = () => { if (voiceModeRef.current) startVoiceListen(); };
+      utterance.onerror = () => { if (voiceModeRef.current) startVoiceListen(); };
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      setMessages((prev) => [...prev, { role: "assistant" as const, content: "Sorry, I had a brief technical issue. Please try again." }]);
+      if (voiceModeRef.current) {
+        setTimeout(() => { if (voiceModeRef.current) startVoiceListen(); }, 1200);
+      }
+    } finally {
+      setPending(false);
     }
-    const recognition = new SpeechRecognitionCtor();
-    recognition.lang = "en-US";
-    recognition.interimResults = false;
-    recognition.onresult = (e: any) => setInput(e.results[0][0].transcript);
-    recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
-    recognitionRef.current = recognition;
-    recognition.start();
+  }
+
+  function toggleVoiceMode() {
+    if (voiceModeRef.current) {
+      voiceModeRef.current = false;
+      setVoicePhase("off");
+      recognitionRef.current?.stop();
+      window.speechSynthesis.cancel();
+    } else {
+      voiceModeRef.current = true;
+      setOpen(true);
+      startVoiceListen();
+    }
+  }
+
+  // ── Single-dictate mic (existing behaviour) ─────────────────────────────
+
+  function toggleListening() {
+    if (listening) { recognitionRef.current?.stop(); return; }
+    const r = new SpeechRecognitionCtor();
+    r.lang = "en-US";
+    r.interimResults = false;
+    r.onresult = (e: any) => setInput(e.results[0][0].transcript);
+    r.onend = () => setListening(false);
+    r.onerror = () => setListening(false);
+    recognitionRef.current = r;
+    r.start();
     setListening(true);
   }
+
+  // ── Text send ───────────────────────────────────────────────────────────
 
   async function send() {
     if (!input.trim() || pending) return;
@@ -187,29 +289,53 @@ export function ChatWidget() {
     }
   }
 
+  // ── Render ──────────────────────────────────────────────────────────────
+
+  const voiceOn = voicePhase !== "off";
+
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full bg-brand-600 text-white px-4 py-3 shadow-lg hover:bg-brand-700 transition-colors"
+        onClick={() => { voiceModeRef.current ? toggleVoiceMode() : setOpen(true); }}
+        className={`fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full text-white px-4 py-3 shadow-lg transition-colors ${
+          voiceOn ? "bg-green-600 hover:bg-green-700 animate-pulse" : "bg-brand-600 hover:bg-brand-700"
+        }`}
       >
-        <MessageCircle size={20} />
-        <span className="text-sm font-medium pr-1">Ask AI</span>
+        {voiceOn ? <Phone size={20} /> : <MessageCircle size={20} />}
+        <span className="text-sm font-medium pr-1">{voiceOn ? "Voice active" : "Ask AI"}</span>
       </button>
     );
   }
 
   return (
     <div className="fixed bottom-6 right-6 z-50 w-80 sm:w-96 h-[28rem] bg-ink-900 rounded-2xl shadow-2xl border border-ink-700 flex flex-col overflow-hidden">
+
+      {/* Header */}
       <div className="bg-ink-950 text-white px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Bot size={18} className="text-brand-400" /> New Class Car Wash Assistant
         </div>
-        <button onClick={() => setOpen(false)} className="text-ink-300 hover:text-white">
-          <X size={18} />
-        </button>
+        <div className="flex items-center gap-2">
+          {SpeechRecognitionCtor && hasTTS && (
+            <button
+              onClick={toggleVoiceMode}
+              title={voiceOn ? "End voice conversation" : "Start hands-free voice conversation"}
+              className={`rounded-full p-1.5 transition-colors ${
+                voiceOn
+                  ? "bg-green-500/20 text-green-400 hover:bg-green-500/30"
+                  : "text-ink-400 hover:text-white hover:bg-ink-700"
+              }`}
+            >
+              <Phone size={16} className={voiceOn ? "animate-pulse" : ""} />
+            </button>
+          )}
+          <button onClick={() => setOpen(false)} className="text-ink-300 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
       </div>
 
+      {/* Messages */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2 bg-ink-950">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
@@ -233,29 +359,67 @@ export function ChatWidget() {
         <div ref={bottomRef} />
       </div>
 
-      <div className="p-2 border-t border-ink-700 flex gap-2">
-        <input
-          className="input flex-1"
-          placeholder={listening ? "Listening..." : "Ask about services, pricing..."}
-          value={input}
-          disabled={pending}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && send()}
-        />
-        {SpeechRecognitionCtor && (
-          <button
-            className={listening ? "btn-danger px-3" : "btn-secondary px-3"}
-            onClick={toggleListening}
+      {/* Bottom: voice status bar OR normal input */}
+      {voiceOn ? (
+        <div className="p-3 border-t border-ink-700 bg-ink-900 flex items-center gap-3">
+          {voicePhase === "listening" && (
+            <>
+              <div className="flex items-center gap-2 flex-1">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-green-500" />
+                </span>
+                <Mic size={16} className="text-green-400 animate-pulse" />
+                <span className="text-sm text-green-400 font-medium">Listening...</span>
+              </div>
+              <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-3 py-1.5">End</button>
+            </>
+          )}
+          {voicePhase === "thinking" && (
+            <>
+              <div className="flex items-center gap-2 flex-1">
+                <Loader2 size={16} className="text-yellow-400 animate-spin" />
+                <span className="text-sm text-yellow-400 font-medium">Thinking...</span>
+              </div>
+              <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-3 py-1.5">End</button>
+            </>
+          )}
+          {voicePhase === "speaking" && (
+            <>
+              <div className="flex items-center gap-2 flex-1">
+                <Volume2 size={16} className="text-brand-400 animate-pulse" />
+                <span className="text-sm text-brand-400 font-medium">Speaking...</span>
+                <span className="text-xs text-ink-500">(say your reply when done)</span>
+              </div>
+              <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-3 py-1.5">End</button>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="p-2 border-t border-ink-700 flex gap-2">
+          <input
+            className="input flex-1"
+            placeholder={listening ? "Listening..." : "Ask about services, pricing..."}
+            value={input}
             disabled={pending}
-            title={listening ? "Stop listening" : "Speak your question"}
-          >
-            <Mic size={16} className={listening ? "animate-pulse" : ""} />
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && send()}
+          />
+          {SpeechRecognitionCtor && (
+            <button
+              className={listening ? "btn-danger px-3" : "btn-secondary px-3"}
+              onClick={toggleListening}
+              disabled={pending}
+              title={listening ? "Stop listening" : "Dictate (tap to speak, tap to stop)"}
+            >
+              {listening ? <MicOff size={16} /> : <Mic size={16} />}
+            </button>
+          )}
+          <button className="btn-primary px-3" onClick={send} disabled={pending}>
+            <Send size={16} />
           </button>
-        )}
-        <button className="btn-primary px-3" onClick={send} disabled={pending}>
-          <Send size={16} />
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
