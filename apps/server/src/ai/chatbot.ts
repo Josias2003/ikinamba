@@ -144,14 +144,27 @@ function extractBookingFields(
     if (m) { phone = m[1]; break; }
   }
 
-  // Email (most recent) -- handles typed "a@b.com" and voice "a at b.com" / "a at b dot com"
+  // Email (most recent) -- handles typed "a@b.com", voice "a at b dot com",
+  // and multi-word voice like "black hat hackers 2022 at gmail dot com"
   let email: string | undefined;
   for (const msg of reversed) {
     // Standard typed email
     const typed = msg.match(/\b([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/);
     if (typed) { email = typed[1]; break; }
-    // Voice: "zachary at gmail dot com" or "zachary at gmail.com"
+
     const normalised = msg.replace(/\s+dot\s+/gi, ".");
+
+    // Voice with "email is/my email is" prefix: captures multi-word local part
+    // e.g. "email is black hat hackers 2022 at gmail.com" → "blackhathackers2022@gmail.com"
+    const labelledMulti = normalised.match(
+      /\bemail(?:\s+(?:is|address|:))?\s+([\w.+\-]+(?:\s+[\w.+\-]+){0,6})\s+at\s+([a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/i
+    );
+    if (labelledMulti) {
+      email = `${labelledMulti[1].trim().replace(/\s+/g, "")}@${labelledMulti[2]}`;
+      break;
+    }
+
+    // Single-word voice: "zachary at gmail.com"
     const spoken = normalised.match(/\b([a-zA-Z0-9._+\-]+)\s+at\s+([a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})\b/i);
     if (spoken) { email = `${spoken[1]}@${spoken[2]}`; break; }
   }
@@ -351,43 +364,55 @@ async function conductBooking(
   services: { name: string }[],
   role?: Role
 ): Promise<ChatbotReply | null> {
-  const lastUser = history[history.length - 1];
-  if (lastUser?.role !== "user") return null;
+  try {
+    const lastUser = history[history.length - 1];
+    if (lastUser?.role !== "user") return null;
 
-  // Affirmatives ("yes", "confirm", etc.) are handled by SHORTCUT 1/2 above
-  if (AFFIRMATIVE.test(lastUser.content)) return null;
+    // Affirmatives ("yes", "confirm", etc.) are handled by SHORTCUT 1/2 above
+    if (AFFIRMATIVE.test(lastUser.content)) return null;
 
-  // Only activate when the conversation has explicit booking intent
-  const hasBookingIntent = history.some(
-    (h) => h.role === "user" && /\b(book|appointment|schedule|reserve)\b/i.test(h.content)
-  );
-  if (!hasBookingIntent) return null;
+    // Extract fields first -- we use the presence of any already-collected field as an
+    // additional booking-intent signal alongside the keyword check. This keeps the conductor
+    // active even after the original "book" keyword has scrolled far up in a long conversation.
+    const raw = extractBookingFields(history, services);
+    const alreadyHaveAField = !!(raw.phone || raw.email || raw.customerName || raw.vehicleMake || raw.plate);
 
-  // Let the LLM handle FAQ/info questions asked mid-booking-flow
-  const isInfoQuestion = /\b(how much|what (services?|is|are)|price|cost|how long|opening hours?|do you (have|offer)|can i|is it possible)\b/i.test(
-    lastUser.content
-  );
-  if (isInfoQuestion) return null;
+    const hasBookingIntent =
+      alreadyHaveAField ||
+      history.some(
+        (h) => h.role === "user" && /\b(book|appointment|schedule|reserve)\b/i.test(h.content)
+      );
+    if (!hasBookingIntent) return null;
 
-  const raw = extractBookingFields(history, services);
-  const { fields: collected } = await enrichWithReturningCustomer(raw);
-  const missing = missingBookingFields(collected);
+    // Let the LLM handle FAQ/info questions asked mid-booking-flow
+    const isInfoQuestion = /\b(how much|what (services?|is|are)|price|cost|how long|opening hours?|do you (have|offer)|can i|is it possible)\b/i.test(
+      lastUser.content
+    );
+    if (isInfoQuestion) return null;
 
-  // All fields present - fire the booking preview immediately, no LLM needed
-  if (!missing.length) {
-    const outcome = await executeTool("book_appointment", { ...collected, confirmed: false }, role);
-    return outcome.ok
-      ? { reply: outcome.summary, display: outcome.display }
-      : { reply: outcome.message };
+    const { fields: collected } = await enrichWithReturningCustomer(raw);
+    const missing = missingBookingFields(collected);
+
+    // All fields present - fire the booking preview immediately, no LLM needed
+    if (!missing.length) {
+      const outcome = await executeTool("book_appointment", { ...collected, confirmed: false }, role);
+      return outcome.ok
+        ? { reply: outcome.summary, display: outcome.display }
+        : { reply: outcome.message };
+    }
+
+    // Ask for the next missing field, with retry/give-up logic
+    const nextField = missing[0];
+    const askCount = countFieldAsks(history, nextField);
+    const reply = askCount === 0
+      ? firstAskForField(nextField, services)
+      : retryAskForField(nextField, askCount);
+    return { reply };
+
+  } catch (err) {
+    logger.error({ err }, "conductBooking error");
+    return { reply: "Sorry, I had a small hiccup. Could you repeat what you just said?" };
   }
-
-  // Ask for the next missing field, with retry/give-up logic
-  const nextField = missing[0];
-  const askCount = countFieldAsks(history, nextField);
-  const reply = askCount === 0
-    ? firstAskForField(nextField, services)
-    : retryAskForField(nextField, askCount);
-  return { reply };
 }
 
 /** Booking/FAQ assistant grounded with real service catalog + bay data pulled from the DB,
@@ -549,7 +574,7 @@ Required fields: name, phone, email (required for QR confirmation), vehicle make
   if (!toolCall) {
     const lower = result.content.toLowerCase();
     const looksLikeFakeConfirm =
-      /\b(booking (is |has been )?(confirmed|scheduled|booked)|appointment (is |has been )?confirmed|you('re| are) (all set|booked))\b/.test(
+      /\b((booking|appointment) (is |has been )?(confirmed|scheduled|booked)|you('re| are) (all set|booked))\b/.test(
         lower
       ) && !/\bshall i book|shall i confirm|can i confirm|want me to book\b/.test(lower);
 
