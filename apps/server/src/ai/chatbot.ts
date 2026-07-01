@@ -124,13 +124,16 @@ function extractBookingFields(
   const allUserText = userMsgs.join("\n");
 
   // Rwandan plate (most recent mention -- user may correct)
-  // Handles both compact "RAB123A" and spaced "RAB 123 A" formats
+  // Priority order: compact → spaced → spelled-out letters ("r a h 224 G")
   let plate: string | undefined;
   for (const msg of reversed) {
-    const spaced = msg.match(/\b([A-Za-z]{2,3})\s+(\d{2,4})\s+([A-Za-z]{1,2})\b/);
-    if (spaced) { plate = `${spaced[1]}${spaced[2]}${spaced[3]}`.toUpperCase(); break; }
     const compact = msg.match(/\b([A-Za-z]{2,3}\d{2,4}[A-Za-z]{1,2})\b/);
     if (compact) { plate = compact[1].toUpperCase(); break; }
+    const spaced = msg.match(/\b([A-Za-z]{2,3})\s+(\d{2,4})\s+([A-Za-z]{1,2})\b/);
+    if (spaced) { plate = `${spaced[1]}${spaced[2]}${spaced[3]}`.toUpperCase(); break; }
+    // Voice spells letters individually: "r a h 224 G" → RAH224G
+    const spelled = msg.match(/\b([A-Za-z](?:\s+[A-Za-z]){1,3})\s+(\d{2,4})\s+([A-Za-z]{1,2})\b/);
+    if (spelled) { plate = `${spelled[1].replace(/\s+/g, "")}${spelled[2]}${spelled[3]}`.toUpperCase(); break; }
   }
 
   // Phone (most recent) -- strip dashes/spaces first so "078-078-7811" and "078 078 7811" both match
@@ -356,19 +359,22 @@ ${scopedBlocks.length ? `\nAdditional operational data you may answer questions 
 
 Rules: Only quote prices/services from the catalog above, and only discuss the operational data given to you -- never invent numbers.
 If asked something outside what you were given (including operational data not listed above), say it's outside what you have access to and suggest reception or the relevant dashboard page.
-To book an appointment, use the book_appointment tool -- only call it once you have every required field. If anything is missing, ask for it in natural conversational language; never mention parameter or field names literally.
-Required fields are exactly: name, phone number, email address, vehicle make/model, plate number (license plate -- always ask for this if not given), which service(s), and the date/time. Email is required -- it is how the customer receives their booking confirmation and tracking QR code. Always ask for it; do not skip or treat the booking as complete without it.
-CRITICAL: The booking does not exist until the book_appointment tool returns. NEVER write the words "confirmed", "booked", "scheduled", "all set", or any synonym yourself -- doing so tells the customer something is saved when nothing is. If you have every required field, call book_appointment immediately; the tool reply tells the customer what happened. If you are missing even one field, ask for it -- do not guess or skip.
-book_appointment is two-step: call it first with confirmed omitted/false once you have all fields -- it returns a summary for the customer to verify, nothing is saved yet. Call it again with confirmed=true only after the customer explicitly says yes/confirm/correct/book it/go ahead in their next message.
-To check status, tell them to use their QR tracking link sent at check-in.
-Keep answers short (2-4 sentences). Output plain text only -- no markdown, no asterisks, no bold/headers.
+BOOKING RULES (follow exactly):
+1. Ask for ONE missing field at a time -- never list multiple questions in one reply.
+2. Never re-ask for a field already collected (see ALREADY COLLECTED section below).
+3. Never write "confirmed", "booked", "scheduled", or "all set" yourself -- the tool does that.
+4. When all fields are collected, call book_appointment with confirmed=false immediately.
+5. After the customer says yes/confirm, call book_appointment again with confirmed=true.
+6. Output plain text only -- no bullet points, no dashes, no bold, no asterisks, no lists.
+7. Keep every reply to 1-2 sentences maximum.
+Required fields: name, phone, email (required for QR confirmation), vehicle make, vehicle model, license plate, service(s), date and time.
 `.trim();
 
-  // Inject a real-time "still missing" reminder so the model can't skip fields it hasn't
-  // collected yet -- static system-prompt rules alone aren't reliable with small local
-  // models; a specific per-turn reminder that lists exactly what's outstanding is far more
-  // effective. Only added when we detect the conversation is already in a booking flow
-  // (user mentioned booking/service/vehicle in a prior turn).
+  // Per-turn booking state injection -- small local models cannot track multi-turn state
+  // reliably from the conversation history alone. We do it for them server-side:
+  // 1. Tell the model exactly what is already collected so it NEVER re-asks.
+  // 2. Tell it the single next field to ask for -- not a list, one field only.
+  // This is far more effective than static rules for a sub-2B parameter model.
   const inBookingFlow = history.some(
     (h) => h.role === "user" && /\b(book|appointment|wash|service|vehicle|car)\b/i.test(h.content)
   );
@@ -376,9 +382,29 @@ Keep answers short (2-4 sentences). Output plain text only -- no markdown, no as
     const raw = extractBookingFields(history, services);
     const { fields: alreadyCollected, customerBlock } = await enrichWithReturningCustomer(raw);
     if (customerBlock) systemPrompt += `\n\n${customerBlock}`;
+
+    // Build the "already have" block
+    const have: string[] = [];
+    if (alreadyCollected.customerName) have.push(`name: "${alreadyCollected.customerName}"`);
+    if (alreadyCollected.phone)        have.push(`phone: "${alreadyCollected.phone}"`);
+    if (alreadyCollected.email)        have.push(`email: "${alreadyCollected.email}"`);
+    if (alreadyCollected.vehicleMake)  have.push(`vehicle make: "${alreadyCollected.vehicleMake}"`);
+    if (alreadyCollected.vehicleModel) have.push(`vehicle model: "${alreadyCollected.vehicleModel}"`);
+    if (alreadyCollected.plate)        have.push(`plate: "${alreadyCollected.plate}"`);
+    if (Array.isArray(alreadyCollected.serviceNames) && (alreadyCollected.serviceNames as string[]).length)
+      have.push(`services: "${(alreadyCollected.serviceNames as string[]).join(", ")}"`);
+    if (alreadyCollected.scheduledAt)
+      have.push(`date/time: "${new Date(alreadyCollected.scheduledAt as string).toLocaleString()}"`);
+
+    if (have.length) {
+      systemPrompt += `\n\nALREADY COLLECTED — do NOT ask for these again, do NOT mention them as missing:\n${have.join("\n")}`;
+    }
+
     const stillMissing = missingBookingFields(alreadyCollected);
     if (stillMissing.length) {
-      systemPrompt += `\n\nFIELDS STILL NEEDED (do NOT call the tool yet, ask for these first, one at a time): ${stillMissing.join(", ")}.`;
+      systemPrompt += `\n\nNEXT ACTION: Ask the customer for their ${stillMissing[0]} only. One question, nothing else. Do not list other fields.`;
+    } else {
+      systemPrompt += `\n\nNEXT ACTION: All fields collected. Call book_appointment now with confirmed=false.`;
     }
   }
 
