@@ -170,23 +170,31 @@ export function ChatWidget() {
   /**
    * Speaks text aloud and returns a Promise that resolves when the utterance
    * finishes (or after a 30-second safety timeout so the loop never hangs).
+   * The 50ms delay after cancel and the paused-resume call fix a Chrome bug
+   * where speechSynthesis silently stops firing onend after a few utterances.
    */
   function speakReply(text: string): Promise<void> {
     return new Promise<void>((resolve) => {
       if (!hasTTS) { resolve(); return; }
       window.speechSynthesis.cancel();
-      const utt = new SpeechSynthesisUtterance(cleanForSpeech(text));
-      utt.rate = 1.05;
-      const voices = window.speechSynthesis.getVoices();
-      const preferred =
-        voices.find((v) => v.lang.startsWith("en") && v.localService) ??
-        voices.find((v) => v.lang.startsWith("en"));
-      if (preferred) utt.voice = preferred;
-      const safety = setTimeout(resolve, 30_000);
-      const done = () => { clearTimeout(safety); resolve(); };
-      utt.onend  = done;
-      utt.onerror = done;
-      window.speechSynthesis.speak(utt);
+
+      setTimeout(() => {
+        if (window.speechSynthesis.paused) window.speechSynthesis.resume();
+
+        const utt = new SpeechSynthesisUtterance(cleanForSpeech(text));
+        utt.rate = 1.05;
+        const voices = window.speechSynthesis.getVoices();
+        const preferred =
+          voices.find((v) => v.lang.startsWith("en") && v.localService) ??
+          voices.find((v) => v.lang.startsWith("en"));
+        if (preferred) utt.voice = preferred;
+
+        const safety = setTimeout(resolve, 30_000);
+        const done = () => { clearTimeout(safety); resolve(); };
+        utt.onend  = done;
+        utt.onerror = done;
+        window.speechSynthesis.speak(utt);
+      }, 50);
     });
   }
 
@@ -216,8 +224,10 @@ export function ChatWidget() {
 
       if (!transcript || !voiceModeRef.current) return;
 
-      // Stop the mic immediately so it doesn't keep recording during processing
-      try { r.abort(); } catch {}
+      // Do NOT call r.abort() here -- with continuous=false the recognition stops
+      // automatically after onresult fires. abort() would trigger onerror("aborted")
+      // which would incorrectly schedule a second startVoiceLoop, causing loops to
+      // double on every turn (1→2→4→8) until Chrome rejects all recognition starts.
 
       setVoicePhase("thinking");
       window.speechSynthesis?.cancel();
@@ -261,6 +271,8 @@ export function ChatWidget() {
     };
 
     r.onerror = (ev: any) => {
+      // "aborted" means we or the browser cancelled the session intentionally -- not an error.
+      if (ev.error === "aborted") return;
       const delay = ev.error === "no-speech" ? 300 : 1200;
       if (voiceModeRef.current) setTimeout(startVoiceLoop, delay);
     };
