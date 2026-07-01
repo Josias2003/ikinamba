@@ -15,7 +15,7 @@ interface ChatMessage {
   display?: ChatDisplay;
 }
 
-type VoicePhase = "off" | "listening" | "thinking" | "speaking";
+type VoicePhase = "off" | "listening" | "thinking" | "speaking" | "reviewing";
 
 const SpeechRecognitionCtor: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 const hasTTS = typeof window !== "undefined" && "speechSynthesis" in window;
@@ -148,6 +148,8 @@ export function ChatWidget() {
   const [pending, setPending] = useState(false);
   const [listening, setListening] = useState(false);   // single-dictate mic mode
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("off");
+  const [pendingTranscript, setPendingTranscript] = useState("");
+  const [reviewCountdown, setReviewCountdown] = useState(0);
 
   const bottomRef    = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -155,6 +157,8 @@ export function ChatWidget() {
   const hasResultRef = useRef(false);   // did the current recognition session get speech?
   const messagesRef  = useRef(messages);
   messagesRef.current = messages;       // always up-to-date, safe to read inside callbacks
+  const pendingTranscriptRef = useRef(""); // readable inside timer callbacks (avoids stale closure)
+  const reviewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -164,6 +168,7 @@ export function ChatWidget() {
     return () => {
       recognitionRef.current?.stop();
       window.speechSynthesis?.cancel();
+      if (reviewTimerRef.current) clearInterval(reviewTimerRef.current);
     };
   }, []);
 
@@ -181,7 +186,27 @@ export function ChatWidget() {
     r.onresult = (e: any) => {
       hasResultRef.current = true;
       const transcript = e.results[0][0].transcript.trim();
-      if (transcript) sendVoiceMessage(transcript);
+      if (!transcript || !voiceModeRef.current) return;
+
+      // Show the transcript for 3 seconds so the user can correct misrecognised names
+      // before it is sent to the server. Auto-sends if untouched.
+      pendingTranscriptRef.current = transcript;
+      setPendingTranscript(transcript);
+      setReviewCountdown(3);
+      setVoicePhase("reviewing");
+
+      if (reviewTimerRef.current) clearInterval(reviewTimerRef.current);
+      reviewTimerRef.current = setInterval(() => {
+        setReviewCountdown((c) => {
+          if (c <= 1) {
+            clearInterval(reviewTimerRef.current!);
+            reviewTimerRef.current = null;
+            if (voiceModeRef.current) sendVoiceMessage(pendingTranscriptRef.current);
+            return 0;
+          }
+          return c - 1;
+        });
+      }, 1000);
     };
 
     r.onend = () => {
@@ -215,7 +240,7 @@ export function ChatWidget() {
     try {
       const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>(
         "/ai/chat",
-        { history: history.slice(-10) }
+        { history: history.slice(-20) }
       );
       setMessages([...history, { role: "assistant" as const, content: reply, display }]);
 
@@ -249,6 +274,7 @@ export function ChatWidget() {
       setVoicePhase("off");
       recognitionRef.current?.stop();
       window.speechSynthesis.cancel();
+      if (reviewTimerRef.current) { clearInterval(reviewTimerRef.current); reviewTimerRef.current = null; }
     } else {
       voiceModeRef.current = true;
       setOpen(true);
@@ -280,7 +306,7 @@ export function ChatWidget() {
     setInput("");
     setPending(true);
     try {
-      const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>("/ai/chat", { history: history.slice(-10) });
+      const { reply, display } = await api.post<{ reply: string; display?: ChatDisplay }>("/ai/chat", { history: history.slice(-20) });
       setMessages([...history, { role: "assistant", content: reply, display }]);
     } catch {
       setMessages([...history, { role: "assistant", content: "Sorry, something went wrong reaching the assistant." }]);
@@ -374,6 +400,42 @@ export function ChatWidget() {
               </div>
               <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-3 py-1.5">End</button>
             </>
+          )}
+          {voicePhase === "reviewing" && (
+            <div className="flex-1 flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-ink-400">I heard (edit if wrong):</span>
+                <span className="text-xs text-ink-500">sending in {reviewCountdown}s</span>
+              </div>
+              <div className="flex gap-2 items-center">
+                <input
+                  className="input flex-1 text-sm py-1"
+                  value={pendingTranscript}
+                  autoFocus
+                  onChange={(e) => {
+                    setPendingTranscript(e.target.value);
+                    pendingTranscriptRef.current = e.target.value;
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      if (reviewTimerRef.current) { clearInterval(reviewTimerRef.current); reviewTimerRef.current = null; }
+                      sendVoiceMessage(pendingTranscriptRef.current);
+                    }
+                  }}
+                />
+                <button
+                  className="btn-primary px-2 py-1 shrink-0"
+                  title="Send now"
+                  onClick={() => {
+                    if (reviewTimerRef.current) { clearInterval(reviewTimerRef.current); reviewTimerRef.current = null; }
+                    sendVoiceMessage(pendingTranscriptRef.current);
+                  }}
+                >
+                  <Send size={14} />
+                </button>
+                <button onClick={toggleVoiceMode} className="btn-secondary text-xs px-2 py-1 shrink-0">End</button>
+              </div>
+            </div>
           )}
           {voicePhase === "thinking" && (
             <>
