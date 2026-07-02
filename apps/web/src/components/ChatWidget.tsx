@@ -216,13 +216,16 @@ export function ChatWidget() {
     let gotResult = false;
 
     r.onresult = async (e: any) => {
-      gotResult = true;
       const transcript = Array.from(e.results as any)
         .map((res: any) => (res as any)[0].transcript)
         .join(" ")
         .trim();
 
+      // Set gotResult only after confirming there's something real to process.
+      // If set before this check and the transcript is empty (e.g. TTS bleed-through),
+      // onend sees gotResult=true and skips the restart → loop stuck in "Listening..." forever.
       if (!transcript || !voiceModeRef.current) return;
+      gotResult = true;
 
       // Do NOT call r.abort() here -- with continuous=false the recognition stops
       // automatically after onresult fires. abort() would trigger onerror("aborted")

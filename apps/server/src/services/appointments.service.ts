@@ -24,14 +24,24 @@ export interface PublicBookingInput {
 export async function createPublicBooking(input: PublicBookingInput) {
   let customerId = input.customerId;
   if (!customerId && input.customer) {
-    const customer = await prisma.customer.create({ data: input.customer });
+    // Find existing customer by phone or email before creating to avoid duplicate errors
+    const existing =
+      (input.customer.phone
+        ? await prisma.customer.findFirst({ where: { phone: input.customer.phone } })
+        : null) ??
+      (input.customer.email
+        ? await prisma.customer.findFirst({ where: { email: input.customer.email } })
+        : null);
+    const customer = existing ?? (await prisma.customer.create({ data: input.customer }));
     customerId = customer.id;
   }
   if (!customerId) throw badRequest("customerId or customer is required");
 
   let vehicleId = input.vehicleId;
   if (!vehicleId && input.vehicle) {
-    const vehicle = await prisma.vehicle.create({ data: { ...input.vehicle, customerId } });
+    // Reuse an existing vehicle with the same plate rather than creating a duplicate
+    const existing = await prisma.vehicle.findUnique({ where: { plate: input.vehicle.plate } });
+    const vehicle = existing ?? (await prisma.vehicle.create({ data: { ...input.vehicle, customerId } }));
     vehicleId = vehicle.id;
   }
   if (!vehicleId) throw badRequest("vehicleId or vehicle is required");
