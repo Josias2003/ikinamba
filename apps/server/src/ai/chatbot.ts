@@ -66,6 +66,14 @@ const VEHICLE_MAKES = [
   "Volvo", "Lexus", "Infiniti", "Skoda", "Seat", "Dodge", "Chevrolet", "Datsun",
 ];
 
+// Sentence filler words that must never be swallowed into an extracted name.
+// Anything under 3 characters is also rejected when collecting name words.
+const NAME_STOP_WORDS = new Set([
+  "i", "a", "the", "to", "and", "need", "want", "book", "is", "am", "are",
+  "my", "me", "you", "it", "name", "please", "sorry",
+  "booking", "trying", "looking", "going", "calling", "coming", "here", "just",
+]);
+
 const MONTHS: Record<string, number> = {
   january:0, february:1, march:2, april:3, may:4, june:5,
   july:6, august:7, september:8, october:9, november:10, december:11,
@@ -172,11 +180,21 @@ function extractBookingFields(
   // Name: try multiple patterns across all user messages, prefer most recent match
   let customerName: string | undefined;
   for (const msg of reversed) {
-    // "my name is X Y" / "I'm X Y" / "I am X Y"
+    // "my name is X [Y]" / "I'm X" / "I am X" / "call me X" / "they call me X"
+    // Single-word names are accepted; trailing sentence filler ("I need to book")
+    // is trimmed off by stopping at the first short/stop word. Max 3 name words.
     const m1 = msg.match(
-      /(?:my name is|I(?:'m| am))\s+([A-Za-z][a-zA-Z'-]+(?:\s+[A-Za-z][a-zA-Z'-]+)+)/i
+      /(?:my name is|I(?:'m| am)|(?:they\s+)?call me)\s+([A-Za-z][a-zA-Z'-]+(?:\s+[A-Za-z][a-zA-Z'-]+)*)/i
     );
-    if (m1) { customerName = m1[1].trim(); break; }
+    if (m1) {
+      const nameWords: string[] = [];
+      for (const w of m1[1].trim().split(/\s+/)) {
+        if (w.length < 3 || NAME_STOP_WORDS.has(w.toLowerCase())) break;
+        nameWords.push(w);
+        if (nameWords.length >= 3) break;
+      }
+      if (nameWords.length) { customerName = nameWords.join(" "); break; }
+    }
 
     // Standalone two-word proper name on its own line/message, not a vehicle make
     const m2 = msg.trim().match(/^([A-Z][a-z'-]+\s+[A-Z][a-z'-]+(?:\s+[A-Z][a-z'-]+)?)[\s,.]?$/);
@@ -290,21 +308,31 @@ function missingBookingFields(args: Record<string, unknown>): string[] {
 // We require a "?" so general mentions (e.g. "services start at RWF 2000") don't count.
 const FIELD_ASK_PATTERNS: Record<string, RegExp> = {
   "your full name": /\bname\b/i,
-  "your phone number": /\b(phone|contact)\b/i,
-  "your email address": /\bemail\b/i,
+  "your phone number": /\b(phone|contact|digits)\b/i,
+  "your email address": /\b(email|username)\b/i,
   "the vehicle make and model": /\b(make|model)\b/i,
-  "the license plate number": /\bplate\b/i,
+  "the license plate number": /\b(plate|character)\b/i,
   "which service(s) you want": /\bservice\b/i,
   "the preferred date and time": /\b(date|time|when)\b/i,
 };
 
+// Voice retry prompts are spoken instructions ("Say the digits one by one.") that
+// don't always end in "?", so count those too -- otherwise the attempt counter
+// stalls and the retry escalation / give-up threshold is never reached.
+const RETRY_PROMPT_STYLE = /^(sorry, i did not catch|(please\s+)?say\b)/i;
+
 function countFieldAsks(history: ChatHistoryItem[], fieldLabel: string): number {
   const pat = FIELD_ASK_PATTERNS[fieldLabel];
   if (!pat) return 0;
-  return history.filter((h) => h.role === "assistant" && pat.test(h.content) && h.content.includes("?")).length;
+  return history.filter(
+    (h) =>
+      h.role === "assistant" &&
+      pat.test(h.content) &&
+      (h.content.includes("?") || RETRY_PROMPT_STYLE.test(h.content))
+  ).length;
 }
 
-function firstAskForField(fieldLabel: string, services: { name: string }[]): string {
+function firstAskForField(fieldLabel: string): string {
   switch (fieldLabel) {
     case "your full name":
       return "Could I get your full name for the booking?";
@@ -316,10 +344,10 @@ function firstAskForField(fieldLabel: string, services: { name: string }[]): str
       return "What make and model is your vehicle? For example, Toyota Corolla.";
     case "the license plate number":
       return "What is the license plate number on the vehicle?";
-    case "which service(s) you want": {
-      const list = services.map((s) => s.name).join(", ");
-      return `Which service would you like? We offer: ${list}.`;
-    }
+    case "which service(s) you want":
+      // Do NOT enumerate the whole catalog -- TTS reading a long list is painful.
+      // The user says what they want and extractBookingFields matches the catalog.
+      return "Which service would you like? We offer washes, detailing, inspections, and more.";
     case "the preferred date and time":
       return "When would you like to come in? For example, Friday at 10am.";
     default:
@@ -327,6 +355,8 @@ function firstAskForField(fieldLabel: string, services: { name: string }[]): str
   }
 }
 
+// Voice-only retry guidance. Never tells the user to type -- this assistant is
+// driven by speech, so every retry coaches the user on HOW to say it instead.
 function retryAskForField(fieldLabel: string, attemptNumber: number): string {
   const friendlyNames: Record<string, string> = {
     "your full name": "full name",
@@ -339,18 +369,49 @@ function retryAskForField(fieldLabel: string, attemptNumber: number): string {
   };
   const fname = friendlyNames[fieldLabel] ?? fieldLabel;
 
-  // Plate is the hardest field for voice -- suggest typing after the first retry
-  if (fieldLabel === "the license plate number") {
-    return "Could you type your plate number? For example: RAB 123 A. It is easier than spelling it aloud.";
+  if (fieldLabel === "your full name") {
+    if (attemptNumber === 1) return "Sorry, I did not catch that. Please say just your first name.";
+    if (attemptNumber === 2) return "Say your first name, then your last name, one word at a time.";
+    return "Please say your name again, speaking each syllable slowly.";
   }
-  // Email: add pronunciation guidance on the first retry
-  if (fieldLabel === "your email address" && attemptNumber === 1) {
-    return 'Sorry, I did not catch that. Could you say your email like "name at gmail dot com"?';
+  if (fieldLabel === "the license plate number") {
+    if (attemptNumber === 1) return "Say each character separately. For example: R, A, B, then 1, 2, 3, then A.";
+    return "Please say the plate one character at a time.";
+  }
+  if (fieldLabel === "your email address") {
+    if (attemptNumber === 1) return "Say your email like: username, at, gmail, dot, com.";
+    return "Say each part separately: your username, then at, then the domain, then dot com.";
+  }
+  if (fieldLabel === "your phone number") {
+    if (attemptNumber === 1) return "Please say your 10-digit phone number again.";
+    return "Say the digits one by one.";
   }
   if (attemptNumber === 1) {
-    return `Sorry, I did not catch that. Could you repeat your ${fname}?`;
+    return `Sorry, I did not catch that. Could you say your ${fname} again?`;
   }
-  return `Could you type your ${fname}? That way I will not miss it.`;
+  return `Please say your ${fname} once more, speaking slowly and clearly.`;
+}
+
+/** Graceful degradation after repeated failed retries on the same field: build a
+ * best-guess value from the last user message so the flow can move on instead of
+ * looping forever. Returns null for fields where guessing would be worse than
+ * asking again (phone/email/service/date have rigid extraction). */
+function bestGuessForField(
+  fieldLabel: string,
+  lastUserMessage: string
+): Record<string, unknown> | null {
+  if (fieldLabel === "your full name") {
+    // First run of 3+ consecutive letters that isn't a known stop word
+    const runs = lastUserMessage.match(/[A-Za-z]{3,}/g) ?? [];
+    const word = runs.find((w) => !NAME_STOP_WORDS.has(w.toLowerCase()));
+    return { customerName: word ?? "Guest" };
+  }
+  if (fieldLabel === "the license plate number") {
+    const parts = lastUserMessage.match(/[A-Za-z0-9]{2,}/g);
+    if (parts?.length) return { plate: parts.join("").toUpperCase() };
+    return null;
+  }
+  return null;
 }
 
 /**
@@ -404,8 +465,33 @@ async function conductBooking(
     // Ask for the next missing field, with retry/give-up logic
     const nextField = missing[0];
     const askCount = countFieldAsks(history, nextField);
+
+    // Graceful degradation: after 5+ asks with no successful extraction, take the
+    // best guess from the last user message and move on rather than looping forever.
+    // Only name and plate are guessable; other fields keep asking.
+    if (askCount >= 5) {
+      const guess = bestGuessForField(nextField, lastUser.content);
+      if (guess) {
+        const patched = { ...collected, ...guess };
+        const stillMissing = missingBookingFields(patched);
+        if (!stillMissing.length) {
+          const outcome = await executeTool("book_appointment", { ...patched, confirmed: false }, role);
+          return outcome.ok
+            ? { reply: outcome.summary, display: outcome.display }
+            : { reply: outcome.message };
+        }
+        const followUp = stillMissing[0];
+        const followUpCount = countFieldAsks(history, followUp);
+        return {
+          reply: followUpCount === 0
+            ? firstAskForField(followUp)
+            : retryAskForField(followUp, followUpCount),
+        };
+      }
+    }
+
     const reply = askCount === 0
-      ? firstAskForField(nextField, services)
+      ? firstAskForField(nextField)
       : retryAskForField(nextField, askCount);
     return { reply };
 
