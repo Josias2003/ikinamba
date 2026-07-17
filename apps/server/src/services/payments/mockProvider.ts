@@ -19,6 +19,15 @@ class MockPaymentProvider implements PaymentProvider {
     }
     return { success: true, providerRef, message: `${this.channelName} payment confirmed` };
   }
+
+  async refund(req: PaymentRequest): Promise<PaymentResult> {
+    await sleep(250 + Math.random() * 400);
+    return {
+      success: true,
+      providerRef: `${this.channelName}-REFUND-${crypto.randomBytes(6).toString("hex")}`,
+      message: `${this.channelName} refund recorded in simulator`,
+    };
+  }
 }
 
 export const momoProvider = new MockPaymentProvider("MOMO");
@@ -28,6 +37,9 @@ export const cardProvider = new MockPaymentProvider("CARD", 0.06);
 export const cashProvider: PaymentProvider = {
   async charge(req) {
     return { success: true, providerRef: `CASH-${Date.now()}`, message: "Cash received" };
+  },
+  async refund(req) {
+    return { success: true, providerRef: `CASH-REFUND-${Date.now()}`, message: "Cash refund recorded" };
   },
 };
 

@@ -207,6 +207,40 @@ export function ChatWidget() {
   function startVoiceLoop() {
     if (!SpeechRecognitionCtor || !voiceModeRef.current) return;
 
+    // ── Parallel audio capture for Groq Whisper ─────────────────────────────
+    // MediaRecorder captures the raw audio while Web Speech API provides the
+    // end-of-utterance signal. When speech ends we send the audio to Groq, which
+    // handles Kinyarwanda names and mixed-language input far better than en-US STT.
+    let recorder: MediaRecorder | null = null;
+    const audioChunks: BlobPart[] = [];
+    let recordedBlob: Blob | null = null;
+    let recMimeType = "audio/webm";
+
+    const recorderReady = navigator.mediaDevices
+      ?.getUserMedia({ audio: true, video: false })
+      .then((stream) => {
+        const mt = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg"].find(
+          (m) => MediaRecorder.isTypeSupported(m)
+        );
+        if (mt) recMimeType = mt.split(";")[0];
+        recorder = new MediaRecorder(stream, mt ? { mimeType: mt } : undefined);
+        recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
+        recorder.onstop = () => {
+          recordedBlob = new Blob(audioChunks, { type: recMimeType });
+          stream.getTracks().forEach((t) => t.stop());
+        };
+        recorder.start(200);
+      })
+      .catch(() => { /* getUserMedia failed; will use browser STT transcript only */ });
+
+    const stopRecorder = (): Promise<void> =>
+      new Promise((resolve) => {
+        if (!recorder || recorder.state === "inactive") { resolve(); return; }
+        recorder.addEventListener("stop", () => resolve(), { once: true });
+        try { recorder.stop(); } catch { resolve(); }
+      });
+
+    // ── Speech recognition ───────────────────────────────────────────────────
     const r = new SpeechRecognitionCtor();
     r.lang = "en-US";
     r.interimResults = false;
@@ -216,7 +250,7 @@ export function ChatWidget() {
     let gotResult = false;
 
     r.onresult = async (e: any) => {
-      const transcript = Array.from(e.results as any)
+      const sttTranscript = Array.from(e.results as any)
         .map((res: any) => (res as any)[0].transcript)
         .join(" ")
         .trim();
@@ -224,7 +258,7 @@ export function ChatWidget() {
       // Set gotResult only after confirming there's something real to process.
       // If set before this check and the transcript is empty (e.g. TTS bleed-through),
       // onend sees gotResult=true and skips the restart → loop stuck in "Listening..." forever.
-      if (!transcript || !voiceModeRef.current) return;
+      if (!sttTranscript || !voiceModeRef.current) return;
       gotResult = true;
 
       // Do NOT call r.abort() here -- with continuous=false the recognition stops
@@ -232,8 +266,27 @@ export function ChatWidget() {
       // which would incorrectly schedule a second startVoiceLoop, causing loops to
       // double on every turn (1→2→4→8) until Chrome rejects all recognition starts.
 
+      // Flush recorder before switching to "thinking" so the blob is complete
+      await recorderReady;
+      await stopRecorder();
+
       setVoicePhase("thinking");
       window.speechSynthesis?.cancel();
+
+      // Prefer Groq Whisper transcript; fall back to browser STT if unavailable/slow.
+      // Skip tiny blobs that are just silence (< 2 KB).
+      let transcript = sttTranscript;
+      if (recordedBlob && recordedBlob.size > 2048) {
+        try {
+          const fd = new FormData();
+          fd.append("audio", recordedBlob, "audio.webm");
+          const ac = new AbortController();
+          const timer = setTimeout(() => ac.abort(), 6000);
+          const result = await api.post<{ transcript: string }>("/ai/transcribe", fd, { signal: ac.signal });
+          clearTimeout(timer);
+          if (result.transcript) transcript = result.transcript;
+        } catch { /* keep sttTranscript */ }
+      }
 
       const userMsg  = { role: "user" as const, content: transcript };
       const history  = [...messagesRef.current, userMsg];
@@ -266,6 +319,7 @@ export function ChatWidget() {
     };
 
     r.onend = () => {
+      stopRecorder();
       // onend fires after onresult (normal) OR when there's silence with no speech.
       // Only restart if we never got a result (silence timeout).
       if (!gotResult && voiceModeRef.current) {
@@ -274,6 +328,7 @@ export function ChatWidget() {
     };
 
     r.onerror = (ev: any) => {
+      stopRecorder();
       // "aborted" means we or the browser cancelled the session intentionally -- not an error.
       if (ev.error === "aborted") return;
       const delay = ev.error === "no-speech" ? 300 : 1200;

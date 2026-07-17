@@ -104,11 +104,23 @@ reportsRouter.get(
         ["Method", "Amount (RWF)"],
         report.paymentsByMethod.map((m: any) => [m.method, Math.round(m.amount).toLocaleString()])
       );
+      pdfSectionTitle(doc, "Payments recorded");
+      pdfTable(
+        doc,
+        ["Time", "Customer", "Method", "Amount"],
+        report.payments.map((p: any) => [new Date(p.paidAt).toLocaleString(), p.customer, p.method, Math.round(p.amount).toLocaleString()])
+      );
     } else if (role === "RECEPTIONIST") {
       pdfMetricRow(doc, [
         { label: "Appointment check-ins", value: String(report.appointmentCheckIns) },
         { label: "Walk-ins checked in", value: String(report.walkInCheckIns) },
       ]);
+      pdfSectionTitle(doc, "Check-in details");
+      pdfTable(
+        doc,
+        ["Time", "Source", "Customer", "Plate", "Status"],
+        report.checkIns.map((c: any) => [new Date(c.checkedInAt).toLocaleString(), c.source, c.customer, c.plate, c.status])
+      );
     } else if (role === "TECHNICIAN") {
       pdfMetricRow(doc, [
         { label: "Jobs assigned", value: String(report.jobsAssigned) },
@@ -118,6 +130,12 @@ reportsRouter.get(
       ]);
       pdfSectionTitle(doc, "Revenue generated");
       doc.fontSize(11).text(`RWF ${Math.round(report.revenueGenerated).toLocaleString()} from completed jobs in this range.`);
+      pdfSectionTitle(doc, "Job details");
+      pdfTable(
+        doc,
+        ["Vehicle", "Customer", "Services", "Status", "Duration"],
+        report.jobs.map((j: any) => [j.plate, j.customer, j.services.join(", "), j.status, j.durationMinutes == null ? "-" : `${j.durationMinutes}m`])
+      );
     }
 
     pdfFooter(doc);
@@ -153,6 +171,18 @@ reportsRouter.get(
     const staffSheet = workbook.addWorksheet("Staff Productivity");
     staffSheet.addRow(["Staff Email", "Jobs Completed"]);
     metrics.staffProductivity.forEach((s) => staffSheet.addRow([s.email, s.count]));
+
+    const revenueDetailSheet = workbook.addWorksheet("Revenue Details");
+    revenueDetailSheet.addRow(["Date", "Customer", "Vehicle", "Services", "Status", "Total (RWF)"]);
+    metrics.revenueDetails.forEach((r) =>
+      revenueDetailSheet.addRow([r.date, r.customer, r.vehicle, r.services.join(", "), r.status, r.total])
+    );
+
+    const vehiclesSheet = workbook.addWorksheet("Vehicles Serviced");
+    vehiclesSheet.addRow(["Checked In", "Customer", "Vehicle", "Plate", "Technician", "Services", "Status", "Invoice Status"]);
+    metrics.vehicleDetails.forEach((v) =>
+      vehiclesSheet.addRow([v.checkedInAt, v.customer, v.vehicle, v.plate, v.technician ?? "", v.services.join(", "), v.status, v.invoiceStatus ?? ""])
+    );
 
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", "attachment; filename=ikinamba-report.xlsx");
@@ -192,6 +222,20 @@ reportsRouter.get(
       doc,
       ["Staff email", "Jobs completed"],
       metrics.staffProductivity.map((s) => [s.email, s.count])
+    );
+
+    pdfSectionTitle(doc, "Revenue details");
+    pdfTable(
+      doc,
+      ["Date", "Customer", "Vehicle", "Total"],
+      metrics.revenueDetails.slice(0, 20).map((r) => [new Date(r.date).toLocaleDateString(), r.customer, r.vehicle, Math.round(r.total).toLocaleString()])
+    );
+
+    pdfSectionTitle(doc, "Vehicles serviced");
+    pdfTable(
+      doc,
+      ["Check-in", "Customer", "Plate", "Status"],
+      metrics.vehicleDetails.slice(0, 20).map((v) => [new Date(v.checkedInAt).toLocaleDateString(), v.customer, v.plate, v.status])
     );
 
     pdfFooter(doc);

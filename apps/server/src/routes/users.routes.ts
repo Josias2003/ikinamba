@@ -50,6 +50,15 @@ usersRouter.patch(
   })
 );
 
+usersRouter.patch(
+  "/:id/reactivate",
+  asyncHandler(async (req, res) => {
+    const user = await prisma.user.update({ where: { id: req.params.id }, data: { isActive: true } });
+    await recordAudit({ userId: req.user!.sub, action: "REACTIVATE", entity: "User", entityId: user.id });
+    res.json({ ok: true });
+  })
+);
+
 usersRouter.post(
   "/backup",
   asyncHandler(async (req, res) => {

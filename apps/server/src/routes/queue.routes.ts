@@ -34,11 +34,56 @@ queueRouter.get(
 queueRouter.post(
   "/walk-in",
   requireRole("RECEPTIONIST"),
-  validateBody(z.object({ customerId: z.string(), vehicleId: z.string() })),
+  validateBody(
+    z
+      .object({
+        customerId: z.string().optional(),
+        vehicleId: z.string().optional(),
+        customer: z.object({
+          name: z.string().min(1),
+          phone: z.string().min(5),
+          email: z.string().email().optional(),
+        }).optional(),
+        vehicle: z.object({
+          make: z.string().min(1),
+          model: z.string().min(1),
+          year: z.number().int().min(1980).max(2100),
+          plate: z.string().min(1),
+          color: z.string().optional(),
+        }).optional(),
+      })
+      .refine((body) => (body.customerId && body.vehicleId) || (body.customer && body.vehicle), {
+        message: "Provide an existing customer/vehicle or new customer/vehicle details.",
+      })
+  ),
   asyncHandler(async (req, res) => {
-    const entry = await checkIn(req.body);
+    let customerId = req.body.customerId;
+    let vehicleId = req.body.vehicleId;
+
+    if (!customerId || !vehicleId) {
+      const newCustomer = req.body.customer!;
+      const newVehicle = req.body.vehicle!;
+      const created = await prisma.$transaction(async (tx) => {
+        const existingVehicle = await tx.vehicle.findUnique({ where: { plate: newVehicle.plate } });
+        if (existingVehicle) {
+          return { customerId: existingVehicle.customerId, vehicleId: existingVehicle.id };
+        }
+
+        const customer = await tx.customer.create({ data: newCustomer });
+        const vehicle = await tx.vehicle.create({ data: { ...newVehicle, customerId: customer.id } });
+        return { customerId: customer.id, vehicleId: vehicle.id };
+      });
+      customerId = created.customerId;
+      vehicleId = created.vehicleId;
+    }
+
+    const entry = await checkIn({ customerId, vehicleId });
+
     await recordAudit({ userId: req.user!.sub, action: "WALK_IN_CHECK_IN", entity: "QueueEntry", entityId: entry.id });
-    res.status(201).json(entry);
+    res.status(201).json(await prisma.queueEntry.findUnique({
+      where: { id: entry.id },
+      include: { customer: true, vehicle: true, bay: true, serviceJob: { include: { items: true, technician: true } } },
+    }));
   })
 );
 

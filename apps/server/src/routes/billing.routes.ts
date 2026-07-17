@@ -112,9 +112,16 @@ billingRouter.post(
 billingRouter.post(
   "/invoices/:id/refund",
   requireRole("ADMIN"),
+  validateBody(z.object({ reason: z.string().min(1), amount: z.number().positive().optional(), confirmedExternal: z.boolean().optional() })),
   asyncHandler(async (req, res) => {
-    const invoice = await refundInvoice(req.params.id);
-    await recordAudit({ userId: req.user!.sub, action: "REFUND", entity: "Invoice", entityId: req.params.id });
+    const invoice = await refundInvoice(req.params.id, req.body);
+    await recordAudit({
+      userId: req.user!.sub,
+      action: "REFUND",
+      entity: "Invoice",
+      entityId: req.params.id,
+      metadata: { reason: req.body.reason, amount: req.body.amount ?? "FULL", confirmedExternal: Boolean(req.body.confirmedExternal) },
+    });
     res.json(invoice);
   })
 );

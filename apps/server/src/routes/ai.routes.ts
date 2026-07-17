@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import multer from "multer";
 import { authenticate, optionalAuthenticate, requireRole } from "../middleware/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { validateBody } from "../middleware/validate.js";
@@ -8,7 +9,10 @@ import { askChatbot } from "../ai/chatbot.js";
 import { recomputeCustomerInsights, scoreSingleCustomer } from "../ai/scoring.js";
 import { isOllamaAvailable } from "../ai/ollamaClient.js";
 import { forecastExpectedVisits } from "../ai/forecast.js";
+import { transcribeWithGroq } from "../ai/groqTranscribe.js";
 import { prisma } from "../lib/prisma.js";
+
+const audioUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 export const aiRouter = Router();
 
@@ -84,6 +88,21 @@ const chatSchema = z.object({
     )
     .max(20),
 });
+
+// Public: customers send audio blobs from the voice widget; no auth needed.
+// Returns { transcript } from Groq Whisper, or empty string if GROQ_API_KEY is not set.
+aiRouter.post(
+  "/transcribe",
+  audioUpload.single("audio"),
+  asyncHandler(async (req, res) => {
+    if (!req.file) return res.json({ transcript: "" });
+    const transcript = await transcribeWithGroq(
+      req.file.buffer,
+      req.file.mimetype || "audio/webm"
+    );
+    res.json({ transcript: transcript ?? "" });
+  })
+);
 
 // Public: anonymous customers on the booking/tracking pages use this with no token.
 // Logged-in staff hit the same endpoint from the widget embedded in the internal app --

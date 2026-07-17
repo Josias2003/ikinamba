@@ -267,9 +267,43 @@ function WalkInForm({ onCheckedIn }: { onCheckedIn: (entry: Entry) => void }) {
   const [results, setResults] = useState<VehicleHit[]>([]);
   const [searched, setSearched] = useState(false);
   const [searchError, setSearchError] = useState("");
+  const [newWalkIn, setNewWalkIn] = useState({
+    customerName: "",
+    phone: "",
+    email: "",
+    make: "",
+    model: "",
+    year: new Date().getFullYear(),
+    color: "",
+  });
   const checkIn = useMutation({
     mutationFn: (v: VehicleHit) => api.post<Entry>("/queue/walk-in", { customerId: v.customer.id, vehicleId: v.id }),
     onSuccess: (entry) => { onCheckedIn(entry); setPlate(""); setResults([]); setSearched(false); },
+    onError: (err) => setSearchError(err instanceof ApiError ? err.message : "Check-in failed."),
+  });
+  const registerWalkIn = useMutation({
+    mutationFn: () => api.post<Entry>("/queue/walk-in", {
+      customer: {
+        name: newWalkIn.customerName,
+        phone: newWalkIn.phone,
+        email: newWalkIn.email || undefined,
+      },
+      vehicle: {
+        make: newWalkIn.make,
+        model: newWalkIn.model,
+        year: Number(newWalkIn.year),
+        plate: plate.trim().toUpperCase(),
+        color: newWalkIn.color || undefined,
+      },
+    }),
+    onSuccess: (entry) => {
+      onCheckedIn(entry);
+      setPlate("");
+      setResults([]);
+      setSearched(false);
+      setNewWalkIn({ customerName: "", phone: "", email: "", make: "", model: "", year: new Date().getFullYear(), color: "" });
+    },
+    onError: (err) => setSearchError(err instanceof ApiError ? err.message : "Registration failed."),
   });
 
   async function search() {
@@ -289,8 +323,8 @@ function WalkInForm({ onCheckedIn }: { onCheckedIn: (entry: Entry) => void }) {
     <div className="card">
       <h3 className="font-semibold text-ink-200 mb-2 flex items-center gap-2"><UserPlus size={18} /> Walk-in check-in</h3>
       <div className="flex gap-2 max-w-md">
-        <input className="input" placeholder="Search plate number..." value={plate} onChange={(e) => setPlate(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} />
-        <button className="btn-secondary" onClick={search}><Search size={16} /></button>
+        <input className="input" placeholder="Search plate number..." value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} onKeyDown={(e) => e.key === "Enter" && search()} />
+        <button className="btn-secondary" onClick={search} disabled={!plate.trim()}><Search size={16} /></button>
       </div>
       {searchError && <p className="alert-danger mt-2">{searchError}</p>}
       {results.length > 0 && (
@@ -304,7 +338,25 @@ function WalkInForm({ onCheckedIn }: { onCheckedIn: (entry: Entry) => void }) {
         </div>
       )}
       {searched && !searchError && !results.length && (
-        <p className="text-ink-400 text-sm mt-2">No vehicle found with that plate number.</p>
+        <form
+          className="mt-4 border border-ink-800 rounded-sm p-3 space-y-3"
+          onSubmit={(e) => { e.preventDefault(); registerWalkIn.mutate(); }}
+        >
+          <p className="text-sm text-ink-300">No vehicle found. Register this walk-in and add it to the queue.</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div><label className="label">Owner name</label><input className="input" required value={newWalkIn.customerName} onChange={(e) => setNewWalkIn({ ...newWalkIn, customerName: e.target.value })} /></div>
+            <div><label className="label">Phone</label><input className="input" required value={newWalkIn.phone} onChange={(e) => setNewWalkIn({ ...newWalkIn, phone: e.target.value })} /></div>
+            <div><label className="label">Email</label><input className="input" type="email" value={newWalkIn.email} onChange={(e) => setNewWalkIn({ ...newWalkIn, email: e.target.value })} /></div>
+            <div><label className="label">Make</label><input className="input" required value={newWalkIn.make} onChange={(e) => setNewWalkIn({ ...newWalkIn, make: e.target.value })} /></div>
+            <div><label className="label">Model</label><input className="input" required value={newWalkIn.model} onChange={(e) => setNewWalkIn({ ...newWalkIn, model: e.target.value })} /></div>
+            <div><label className="label">Year</label><input className="input" type="number" min={1980} max={2100} required value={newWalkIn.year} onChange={(e) => setNewWalkIn({ ...newWalkIn, year: Number(e.target.value) })} /></div>
+            <div><label className="label">Color</label><input className="input" value={newWalkIn.color} onChange={(e) => setNewWalkIn({ ...newWalkIn, color: e.target.value })} /></div>
+            <div><label className="label">Plate</label><input className="input" required value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} /></div>
+          </div>
+          <button className="btn-primary" type="submit" disabled={registerWalkIn.isPending}>
+            <UserPlus size={14} /> Register and check in
+          </button>
+        </form>
       )}
     </div>
   );

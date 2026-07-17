@@ -14,10 +14,18 @@ export function defaultRange(): DateRange {
 
 export async function getDashboardMetrics({ since, until }: DateRange) {
   const [invoices, queueEntries, jobItems, bays] = await Promise.all([
-    prisma.invoice.findMany({ where: { createdAt: { gte: since, lte: until }, status: { in: ["PAID", "PARTIALLY_PAID"] } } }),
+    prisma.invoice.findMany({
+      where: { createdAt: { gte: since, lte: until }, status: { in: ["PAID", "PARTIALLY_PAID"] } },
+      include: {
+        customer: true,
+        items: true,
+        payments: true,
+        queueEntry: { include: { vehicle: true, serviceJob: { include: { technician: true } } } },
+      },
+    }),
     prisma.queueEntry.findMany({
       where: { checkedInAt: { gte: since, lte: until } },
-      include: { serviceJob: { include: { technician: true } } },
+      include: { customer: true, vehicle: true, serviceJob: { include: { technician: true, items: true } }, invoice: true },
     }),
     prisma.serviceJobItem.findMany({
       where: { serviceJob: { queueEntry: { checkedInAt: { gte: since, lte: until } } } },
@@ -63,6 +71,30 @@ export async function getDashboardMetrics({ since, until }: DateRange) {
     vehiclesServiced: queueEntries.length,
     totalRevenue: invoices.reduce((s, i) => s + i.total, 0),
     avgServiceMinutes: Math.round(avgServiceMinutes),
+    revenueDetails: invoices.map((invoice) => ({
+      id: invoice.id,
+      date: invoice.createdAt,
+      customer: invoice.customer.name,
+      vehicle: invoice.queueEntry?.vehicle
+        ? `${invoice.queueEntry.vehicle.make} ${invoice.queueEntry.vehicle.model} (${invoice.queueEntry.vehicle.plate})`
+        : "Booking payment",
+      total: invoice.total,
+      status: invoice.status,
+      services: invoice.items.map((item) => item.description),
+      payments: invoice.payments.map((payment) => ({ method: payment.method, amount: payment.amount, status: payment.status })),
+    })),
+    vehicleDetails: queueEntries.map((entry) => ({
+      id: entry.id,
+      checkedInAt: entry.checkedInAt,
+      completedAt: entry.completedAt,
+      customer: entry.customer.name,
+      vehicle: `${entry.vehicle.make} ${entry.vehicle.model}`,
+      plate: entry.vehicle.plate,
+      status: entry.status,
+      technician: entry.serviceJob?.technician?.email ?? null,
+      services: entry.serviceJob?.items.map((item) => item.name) ?? [],
+      invoiceStatus: entry.invoice?.status ?? null,
+    })),
   };
 }
 
@@ -80,18 +112,53 @@ export async function getCustomerRetention() {
 export async function getCashierReport(userId: string, { since, until }: DateRange) {
   const entries = await prisma.auditLog.findMany({
     where: { userId, createdAt: { gte: since, lte: until }, action: { in: ["CREATE", "PAYMENT"] }, entity: "Invoice" },
+    orderBy: { createdAt: "desc" },
   });
+  const invoiceIds = [...new Set(entries.map((e) => e.entityId).filter((id): id is string => Boolean(id)))];
+  const invoices = invoiceIds.length
+    ? await prisma.invoice.findMany({
+        where: { id: { in: invoiceIds } },
+        include: { customer: true, payments: true, items: true, queueEntry: { include: { vehicle: true } } },
+      })
+    : [];
+  const invoicesById = new Map(invoices.map((invoice) => [invoice.id, invoice]));
 
   let invoicesCreated = 0;
   let totalCollected = 0;
   const byMethod: Record<string, number> = {};
+  const invoiceRows = [];
+  const paymentRows = [];
   for (const e of entries) {
-    if (e.action === "CREATE") invoicesCreated++;
+    const invoice = e.entityId ? invoicesById.get(e.entityId) : null;
+    if (e.action === "CREATE") {
+      invoicesCreated++;
+      if (invoice) {
+        invoiceRows.push({
+          id: invoice.id,
+          createdAt: invoice.createdAt,
+          customer: invoice.customer.name,
+          vehicle: invoice.queueEntry?.vehicle
+            ? `${invoice.queueEntry.vehicle.make} ${invoice.queueEntry.vehicle.model} (${invoice.queueEntry.vehicle.plate})`
+            : "Booking payment",
+          total: invoice.total,
+          status: invoice.status,
+          services: invoice.items.map((item) => item.description),
+        });
+      }
+    }
     if (e.action === "PAYMENT") {
       const meta = JSON.parse(e.metadata || "{}");
       if (meta.success) {
         totalCollected += meta.amount ?? 0;
         byMethod[meta.method] = (byMethod[meta.method] || 0) + (meta.amount ?? 0);
+        paymentRows.push({
+          invoiceId: e.entityId,
+          paidAt: e.createdAt,
+          customer: invoice?.customer.name ?? "Unknown",
+          method: meta.method ?? "UNKNOWN",
+          amount: meta.amount ?? 0,
+          status: "SUCCESS",
+        });
       }
     }
   }
@@ -101,6 +168,8 @@ export async function getCashierReport(userId: string, { since, until }: DateRan
     invoicesCreated,
     totalCollected,
     paymentsByMethod: Object.entries(byMethod).map(([method, amount]) => ({ method, amount })),
+    invoices: invoiceRows,
+    payments: paymentRows,
   };
 }
 
@@ -110,12 +179,35 @@ export async function getCashierReport(userId: string, { since, until }: DateRan
 export async function getReceptionistReport(userId: string, { since, until }: DateRange) {
   const entries = await prisma.auditLog.findMany({
     where: { userId, createdAt: { gte: since, lte: until }, action: { in: ["CHECK_IN", "WALK_IN_CHECK_IN"] } },
+    orderBy: { createdAt: "desc" },
   });
+  const queueEntryIds = [...new Set(entries.map((e) => e.entityId).filter((id): id is string => Boolean(id)))];
+  const queueEntries = queueEntryIds.length
+    ? await prisma.queueEntry.findMany({
+        where: { id: { in: queueEntryIds } },
+        include: { customer: true, vehicle: true, appointment: true },
+      })
+    : [];
+  const queueEntriesById = new Map(queueEntries.map((entry) => [entry.id, entry]));
+
   return {
     since: since.toISOString().slice(0, 10),
     until: until.toISOString().slice(0, 10),
     appointmentCheckIns: entries.filter((e) => e.action === "CHECK_IN").length,
     walkInCheckIns: entries.filter((e) => e.action === "WALK_IN_CHECK_IN").length,
+    checkIns: entries.map((entry) => {
+      const queueEntry = entry.entityId ? queueEntriesById.get(entry.entityId) : null;
+      return {
+        id: entry.entityId,
+        checkedInAt: entry.createdAt,
+        source: entry.action === "CHECK_IN" ? "APPOINTMENT" : "WALK_IN",
+        customer: queueEntry?.customer.name ?? "Unknown",
+        vehicle: queueEntry?.vehicle ? `${queueEntry.vehicle.make} ${queueEntry.vehicle.model}` : "Unknown",
+        plate: queueEntry?.vehicle.plate ?? "",
+        status: queueEntry?.status ?? "UNKNOWN",
+        appointmentTime: queueEntry?.appointment?.scheduledAt ?? null,
+      };
+    }),
   };
 }
 
@@ -125,9 +217,16 @@ export async function getReceptionistReport(userId: string, { since, until }: Da
 export async function getTechnicianReport(userId: string, { since, until }: DateRange) {
   const jobs = await prisma.serviceJob.findMany({
     where: { technicianId: userId, queueEntry: { checkedInAt: { gte: since, lte: until } } },
-    include: { queueEntry: true },
+    include: {
+      items: true,
+      queueEntry: { include: { customer: true, vehicle: true, invoice: true } },
+    },
   });
-  const qcSigned = await prisma.serviceJob.count({ where: { qcSignedById: userId, qcSignedAt: { gte: since, lte: until } } });
+  const qcJobs = await prisma.serviceJob.findMany({
+    where: { qcSignedById: userId, qcSignedAt: { gte: since, lte: until } },
+    include: { queueEntry: { include: { customer: true, vehicle: true } } },
+    orderBy: { qcSignedAt: "desc" },
+  });
 
   const completed = jobs.filter((j) => j.queueEntry.completedAt && j.queueEntry.startedAt);
   const avgServiceMinutes = completed.length
@@ -152,7 +251,33 @@ export async function getTechnicianReport(userId: string, { since, until }: Date
     jobsAssigned: jobs.length,
     jobsCompleted: completed.length,
     avgServiceMinutes: Math.round(avgServiceMinutes),
-    qcSignOffs: qcSigned,
+    qcSignOffs: qcJobs.length,
     revenueGenerated,
+    jobs: jobs.map((job) => ({
+      id: job.id,
+      queueEntryId: job.queueEntryId,
+      customer: job.queueEntry.customer.name,
+      vehicle: `${job.queueEntry.vehicle.make} ${job.queueEntry.vehicle.model}`,
+      plate: job.queueEntry.vehicle.plate,
+      status: job.queueEntry.status,
+      checkedInAt: job.queueEntry.checkedInAt,
+      startedAt: job.queueEntry.startedAt,
+      completedAt: job.queueEntry.completedAt,
+      durationMinutes:
+        job.queueEntry.startedAt && job.queueEntry.completedAt
+          ? Math.round((job.queueEntry.completedAt.getTime() - job.queueEntry.startedAt.getTime()) / 60_000)
+          : null,
+      services: job.items.map((item) => item.name),
+      invoiceTotal: job.queueEntry.invoice?.total ?? null,
+      invoiceStatus: job.queueEntry.invoice?.status ?? null,
+    })),
+    qcSignOffDetails: qcJobs.map((job) => ({
+      id: job.id,
+      signedAt: job.qcSignedAt,
+      customer: job.queueEntry.customer.name,
+      vehicle: `${job.queueEntry.vehicle.make} ${job.queueEntry.vehicle.model}`,
+      plate: job.queueEntry.vehicle.plate,
+      status: job.queueEntry.status,
+    })),
   };
 }

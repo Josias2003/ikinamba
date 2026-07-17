@@ -117,7 +117,7 @@ model Appointment {
   vehicleId   String
   vehicle     Vehicle  @relation(fields: [vehicleId], references: [id])
   scheduledAt DateTime
-  status      String   @default("CONFIRMED") // CONFIRMED | WAITLISTED | CANCELLED | COMPLETED | NO_SHOW
+  status      String   @default("CONFIRMED") // CONFIRMED | WAITLISTED | CHECKED_IN | CANCELLED | COMPLETED | NO_SHOW
   source      String   @default("ONLINE") // ONLINE | PHONE | WALK_IN
   notes       String?  @db.Text
   cancellationReason String? @db.Text
@@ -227,7 +227,7 @@ model Invoice {
   loyaltyValueApplied Float    @default(0)
   tax                 Float    @default(0)
   total               Float
-  status              String   @default("UNPAID") // UNPAID | PARTIALLY_PAID | PAID | REFUNDED
+  status              String   @default("UNPAID") // UNPAID | PARTIALLY_PAID | PAID | PARTIALLY_REFUNDED | REFUNDED
   createdAt           DateTime @default(now())
 
   items    InvoiceItem[]

@@ -20,6 +20,19 @@ export async function checkIn(opts: { customerId: string; vehicleId: string; app
   const customer = await prisma.customer.findUnique({ where: { id: opts.customerId } });
   if (!customer) throw notFound("Customer not found");
 
+  const activeEntry = await prisma.queueEntry.findFirst({
+    where: {
+      vehicleId: opts.vehicleId,
+      status: { in: ["WAITING", "IN_SERVICE", "QUALITY_CHECK", "READY"] },
+    },
+    include: { customer: true, vehicle: true },
+  });
+  if (activeEntry) {
+    throw conflict(
+      `${activeEntry.vehicle.plate} is already checked in for ${activeEntry.customer.name} (${activeEntry.status.replace("_", " ")}).`
+    );
+  }
+
   // An online booking already carries a trackingToken from confirmation time -- reuse it so the
   // QR the customer received at booking keeps working after they arrive, instead of going stale.
   let trackingToken = newTrackingToken();
@@ -28,7 +41,7 @@ export async function checkIn(opts: { customerId: string; vehicleId: string; app
     const appt = await prisma.appointment.findUnique({ where: { id: opts.appointmentId }, include: { invoice: true } });
     if (!appt) throw notFound("Appointment not found");
     if (appt.status !== "CONFIRMED") throw conflict("Appointment is not in a check-in-able state");
-    await prisma.appointment.update({ where: { id: appt.id }, data: { status: "COMPLETED" } });
+    await prisma.appointment.update({ where: { id: appt.id }, data: { status: "CHECKED_IN" } });
     trackingToken = appt.trackingToken ?? trackingToken;
     // A "Pay with MoMo now" invoice created at booking time has no QueueEntry yet -- carry
     // its id forward so it can be reattached below instead of Billing seeing this visit as

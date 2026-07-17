@@ -63,4 +63,9 @@ export const env = {
     targetEnv: process.env.MOMO_TARGET_ENV || "sandbox",
     currency: process.env.MOMO_CURRENCY || "EUR",
   },
+  groq: {
+    // Whisper-large-v3 for multilingual STT (Kinyarwanda + English name recognition).
+    // Free tier: groq.com → API Keys. Leave blank to fall back to browser Web Speech API.
+    apiKey: process.env.GROQ_API_KEY || "",
+  },
 };

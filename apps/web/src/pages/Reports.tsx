@@ -15,6 +15,18 @@ interface Metrics {
   totalRevenue: number;
   vehiclesServiced: number;
   avgServiceMinutes: number;
+  revenueDetails: {
+    id: string; date: string; customer: string; vehicle: string; total: number; status: string; services: string[];
+    payments: { method: string; amount: number; status: string }[];
+  }[];
+  vehicleDetails: {
+    id: string; checkedInAt: string; completedAt?: string | null; customer: string; vehicle: string; plate: string;
+    status: string; technician?: string | null; services: string[]; invoiceStatus?: string | null;
+  }[];
+}
+
+function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
+  return <tr><td colSpan={colSpan} className="px-4 py-6 text-center text-ink-400">{label}</td></tr>;
 }
 
 export function Reports() {
@@ -90,6 +102,48 @@ export function Reports() {
             {data.staffProductivity.map((s) => (
               <tr key={s.email}><td className="py-2">{s.email}</td><td className="py-2 text-right">{s.count} jobs</td></tr>
             ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card !p-0 overflow-hidden">
+        <h3 className="font-semibold text-ink-200 px-4 py-3">Revenue details</h3>
+        <table className="w-full text-sm">
+          <thead className="bg-ink-950 text-ink-500 text-left">
+            <tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Services</th><th className="px-4 py-3 text-right">Total</th></tr>
+          </thead>
+          <tbody className="divide-y divide-ink-800">
+            {data.revenueDetails.map((invoice) => (
+              <tr key={invoice.id}>
+                <td className="px-4 py-3 text-ink-500">{new Date(invoice.date).toLocaleDateString()}</td>
+                <td className="px-4 py-3 text-ink-200">{invoice.customer}</td>
+                <td className="px-4 py-3 text-ink-400">{invoice.vehicle}</td>
+                <td className="px-4 py-3 text-ink-400">{invoice.services.join(", ") || "-"}</td>
+                <td className="px-4 py-3 text-right">RWF {Math.round(invoice.total).toLocaleString()}</td>
+              </tr>
+            ))}
+            {!data.revenueDetails.length && <EmptyRow colSpan={5} label="No paid or partially paid invoices in this range." />}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card !p-0 overflow-hidden">
+        <h3 className="font-semibold text-ink-200 px-4 py-3">Vehicles serviced</h3>
+        <table className="w-full text-sm">
+          <thead className="bg-ink-950 text-ink-500 text-left">
+            <tr><th className="px-4 py-3">Check-in</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Technician</th><th className="px-4 py-3">Status</th></tr>
+          </thead>
+          <tbody className="divide-y divide-ink-800">
+            {data.vehicleDetails.map((entry) => (
+              <tr key={entry.id}>
+                <td className="px-4 py-3 text-ink-500">{new Date(entry.checkedInAt).toLocaleString()}</td>
+                <td className="px-4 py-3 text-ink-200">{entry.vehicle} - {entry.plate}</td>
+                <td className="px-4 py-3 text-ink-400">{entry.customer}</td>
+                <td className="px-4 py-3 text-ink-400">{entry.technician ?? "Unassigned"}</td>
+                <td className="px-4 py-3"><span className="badge bg-ink-800 text-ink-300">{entry.status}</span></td>
+              </tr>
+            ))}
+            {!data.vehicleDetails.length && <EmptyRow colSpan={5} label="No vehicles were checked in during this range." />}
           </tbody>
         </table>
       </div>

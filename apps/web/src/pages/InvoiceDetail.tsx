@@ -26,6 +26,9 @@ export function InvoiceDetail() {
   const qc = useQueryClient();
   const [method, setMethod] = useState("CASH");
   const [amount, setAmount] = useState<number | "">("");
+  const [refundReason, setRefundReason] = useState("");
+  const [refundAmount, setRefundAmount] = useState<number | "">("");
+  const [confirmedExternal, setConfirmedExternal] = useState(false);
 
   const { data: invoice, isLoading, isError } = useQuery({ queryKey: ["invoice", id], queryFn: () => api.get<InvoiceFull>(`/billing/invoices/${id}`) });
 
@@ -33,7 +36,19 @@ export function InvoiceDetail() {
     mutationFn: () => api.post(`/billing/invoices/${id}/payments`, { method, amount: Number(amount) }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["invoice", id] }); setAmount(""); },
   });
-  const refund = useMutation({ mutationFn: () => api.post(`/billing/invoices/${id}/refund`), onSuccess: () => qc.invalidateQueries({ queryKey: ["invoice", id] }) });
+  const refund = useMutation({
+    mutationFn: () => api.post(`/billing/invoices/${id}/refund`, {
+      reason: refundReason,
+      amount: refundAmount === "" ? undefined : Number(refundAmount),
+      confirmedExternal,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["invoice", id] });
+      setRefundReason("");
+      setRefundAmount("");
+      setConfirmedExternal(false);
+    },
+  });
 
   if (isLoading) return <p className="text-ink-400">Loading...</p>;
   if (isError || !invoice) {
@@ -45,7 +60,9 @@ export function InvoiceDetail() {
     );
   }
   const paid = invoice.payments.filter((p) => p.status === "SUCCESS").reduce((s, p) => s + p.amount, 0);
+  const refunded = Math.abs(invoice.payments.filter((p) => p.status === "REFUNDED" && p.amount < 0).reduce((s, p) => s + p.amount, 0));
   const balance = invoice.total - paid;
+  const refundable = Math.max(0, paid - refunded);
 
   return (
     <div className="max-w-xl space-y-5">
@@ -72,6 +89,7 @@ export function InvoiceDetail() {
           {invoice.discountAmount > 0 && <div className="flex justify-between text-ink-500"><span>Discount</span><span>-RWF {invoice.discountAmount.toLocaleString()}</span></div>}
           {invoice.loyaltyValueApplied > 0 && <div className="flex justify-between text-ink-500"><span>Loyalty points applied</span><span>-RWF {invoice.loyaltyValueApplied.toLocaleString()}</span></div>}
           <div className="flex justify-between font-semibold text-ink-100"><span>Total</span><span>RWF {invoice.total.toLocaleString()}</span></div>
+          {refunded > 0 && <div className="flex justify-between text-red-300"><span>Refunded</span><span>RWF {refunded.toLocaleString()}</span></div>}
           <div className="flex justify-between text-brand-300"><span>Balance due</span><span>RWF {balance.toLocaleString()}</span></div>
         </div>
         <span className="badge bg-ink-800 text-ink-300 mt-2">{invoice.status}</span>
@@ -89,7 +107,7 @@ export function InvoiceDetail() {
         <div className="space-y-1 mb-3">
           {invoice.payments.map((p) => (
             <div key={p.id} className="flex justify-between text-sm">
-              <span>{p.method}</span><span className={p.status === "SUCCESS" ? "badge-done" : "badge-danger"}>{p.status}</span><span>RWF {p.amount.toLocaleString()}</span>
+              <span>{p.method}</span><span className={p.status === "SUCCESS" ? "badge-done" : p.status === "REFUNDED" ? "badge-warn" : "badge-danger"}>{p.status}</span><span>RWF {p.amount.toLocaleString()}</span>
             </div>
           ))}
         </div>
@@ -108,10 +126,25 @@ export function InvoiceDetail() {
         )}
         {canRecordPayment && pay.isError && <p className="alert-danger mt-2">{(pay.error as any)?.message}</p>}
 
-        {canRefund && invoice.status === "PAID" && (
-          <button className="btn-danger text-xs mt-3" onClick={() => refund.mutate()} disabled={refund.isPending}>
-            {refund.isPending && <Loader2 size={13} className="animate-spin" />} Refund
-          </button>
+        {canRefund && refundable <= 0 && (
+          <p className="text-xs text-ink-500 mt-3">Refund is available only when the invoice has successful payments that have not already been refunded.</p>
+        )}
+        {canRefund && refundable > 0 && (
+          <div className="mt-3 space-y-2">
+            <p className="text-xs text-ink-500">Refundable balance: RWF {refundable.toLocaleString()}. Leave amount blank to refund all remaining refundable payments.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <input className="input" placeholder="Reason" value={refundReason} onChange={(e) => setRefundReason(e.target.value)} />
+              <input className="input" type="number" min={0.01} max={refundable} step="0.01" placeholder="Amount (optional)" value={refundAmount} onChange={(e) => setRefundAmount(e.target.value ? Number(e.target.value) : "")} />
+            </div>
+            <label className="flex items-start gap-2 text-xs text-ink-400">
+              <input type="checkbox" checked={confirmedExternal} onChange={(e) => setConfirmedExternal(e.target.checked)} />
+              I already confirmed any external provider refund manually.
+            </label>
+            <button className="btn-danger text-xs" onClick={() => refund.mutate()} disabled={!refundReason.trim() || refund.isPending}>
+              {refund.isPending && <Loader2 size={13} className="animate-spin" />} Refund
+            </button>
+            {refund.isError && <p className="alert-danger">{(refund.error as any)?.message}</p>}
+          </div>
         )}
       </div>
     </div>

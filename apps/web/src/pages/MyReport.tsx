@@ -5,9 +5,24 @@ import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { DateRangePicker, defaultDateRange, type DateRangeValue } from "../components/DateRangePicker";
 
-interface CashierReport { since: string; until: string; invoicesCreated: number; totalCollected: number; paymentsByMethod: { method: string; amount: number }[] }
-interface ReceptionistReport { since: string; until: string; appointmentCheckIns: number; walkInCheckIns: number }
-interface TechnicianReport { since: string; until: string; jobsAssigned: number; jobsCompleted: number; avgServiceMinutes: number; qcSignOffs: number; revenueGenerated: number }
+interface CashierReport {
+  since: string; until: string; invoicesCreated: number; totalCollected: number;
+  paymentsByMethod: { method: string; amount: number }[];
+  invoices: { id: string; createdAt: string; customer: string; vehicle: string; total: number; status: string; services: string[] }[];
+  payments: { invoiceId: string; paidAt: string; customer: string; method: string; amount: number; status: string }[];
+}
+interface ReceptionistReport {
+  since: string; until: string; appointmentCheckIns: number; walkInCheckIns: number;
+  checkIns: { id: string; checkedInAt: string; source: string; customer: string; vehicle: string; plate: string; status: string; appointmentTime?: string | null }[];
+}
+interface TechnicianReport {
+  since: string; until: string; jobsAssigned: number; jobsCompleted: number; avgServiceMinutes: number; qcSignOffs: number; revenueGenerated: number;
+  jobs: {
+    id: string; customer: string; vehicle: string; plate: string; status: string; checkedInAt: string; startedAt?: string | null;
+    completedAt?: string | null; durationMinutes?: number | null; services: string[]; invoiceTotal?: number | null; invoiceStatus?: string | null;
+  }[];
+  qcSignOffDetails: { id: string; signedAt?: string | null; customer: string; vehicle: string; plate: string; status: string }[];
+}
 
 function MetricCard({ label, value }: { label: string; value: string }) {
   return (
@@ -16,6 +31,14 @@ function MetricCard({ label, value }: { label: string; value: string }) {
       <div className="panel-title mt-1">{label}</div>
     </div>
   );
+}
+
+function EmptyRow({ colSpan, label }: { colSpan: number; label: string }) {
+  return <tr><td colSpan={colSpan} className="py-4 text-ink-400 text-center">{label}</td></tr>;
+}
+
+function formatDateTime(value?: string | null) {
+  return value ? new Date(value).toLocaleString() : "-";
 }
 
 /** Each staff role's own performance/activity report -- CASHIER/RECEPTIONIST/TECHNICIAN
@@ -59,6 +82,45 @@ export function MyReport() {
             </tbody>
           </table>
         </div>
+        <div className="card !p-0 overflow-hidden">
+          <h3 className="font-semibold text-ink-200 px-4 py-3">Payments recorded</h3>
+          <table className="w-full text-sm">
+            <thead className="bg-ink-950 text-ink-500 text-left">
+              <tr><th className="px-4 py-3">Time</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Method</th><th className="px-4 py-3 text-right">Amount</th></tr>
+            </thead>
+            <tbody className="divide-y divide-ink-800">
+              {r.payments.map((p) => (
+                <tr key={`${p.invoiceId}-${p.paidAt}`}>
+                  <td className="px-4 py-3 text-ink-500">{formatDateTime(p.paidAt)}</td>
+                  <td className="px-4 py-3 text-ink-200">{p.customer}</td>
+                  <td className="px-4 py-3">{p.method}</td>
+                  <td className="px-4 py-3 text-right">RWF {Math.round(p.amount).toLocaleString()}</td>
+                </tr>
+              ))}
+              {!r.payments.length && <EmptyRow colSpan={4} label="No payment rows in this window." />}
+            </tbody>
+          </table>
+        </div>
+        <div className="card !p-0 overflow-hidden">
+          <h3 className="font-semibold text-ink-200 px-4 py-3">Invoices created</h3>
+          <table className="w-full text-sm">
+            <thead className="bg-ink-950 text-ink-500 text-left">
+              <tr><th className="px-4 py-3">Date</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Services</th><th className="px-4 py-3 text-right">Total</th></tr>
+            </thead>
+            <tbody className="divide-y divide-ink-800">
+              {r.invoices.map((inv) => (
+                <tr key={inv.id}>
+                  <td className="px-4 py-3 text-ink-500">{formatDateTime(inv.createdAt)}</td>
+                  <td className="px-4 py-3 text-ink-200">{inv.customer}</td>
+                  <td className="px-4 py-3 text-ink-400">{inv.vehicle}</td>
+                  <td className="px-4 py-3 text-ink-400">{inv.services.join(", ") || "-"}</td>
+                  <td className="px-4 py-3 text-right">RWF {Math.round(inv.total).toLocaleString()}</td>
+                </tr>
+              ))}
+              {!r.invoices.length && <EmptyRow colSpan={5} label="No invoice rows in this window." />}
+            </tbody>
+          </table>
+        </div>
       </div>
     );
   }
@@ -71,6 +133,26 @@ export function MyReport() {
         <div className="grid grid-cols-2 gap-4">
           <MetricCard label="Appointment check-ins" value={String(r.appointmentCheckIns)} />
           <MetricCard label="Walk-ins checked in" value={String(r.walkInCheckIns)} />
+        </div>
+        <div className="card !p-0 overflow-hidden">
+          <h3 className="font-semibold text-ink-200 px-4 py-3">Check-in details</h3>
+          <table className="w-full text-sm">
+            <thead className="bg-ink-950 text-ink-500 text-left">
+              <tr><th className="px-4 py-3">Time</th><th className="px-4 py-3">Source</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Status</th></tr>
+            </thead>
+            <tbody className="divide-y divide-ink-800">
+              {r.checkIns.map((row) => (
+                <tr key={`${row.id}-${row.checkedInAt}`}>
+                  <td className="px-4 py-3 text-ink-500">{formatDateTime(row.checkedInAt)}</td>
+                  <td className="px-4 py-3"><span className="badge bg-ink-800 text-ink-300">{row.source}</span></td>
+                  <td className="px-4 py-3 text-ink-200">{row.customer}</td>
+                  <td className="px-4 py-3 text-ink-400">{row.vehicle} - {row.plate}</td>
+                  <td className="px-4 py-3 text-ink-400">{row.status}</td>
+                </tr>
+              ))}
+              {!r.checkIns.length && <EmptyRow colSpan={5} label="No check-ins in this window." />}
+            </tbody>
+          </table>
         </div>
       </div>
     );
@@ -87,6 +169,45 @@ export function MyReport() {
           <MetricCard label="Avg. service time" value={`${r.avgServiceMinutes}m`} />
           <MetricCard label="QC sign-offs" value={String(r.qcSignOffs)} />
           <MetricCard label="Revenue generated" value={`RWF ${Math.round(r.revenueGenerated).toLocaleString()}`} />
+        </div>
+        <div className="card !p-0 overflow-hidden">
+          <h3 className="font-semibold text-ink-200 px-4 py-3">Job details</h3>
+          <table className="w-full text-sm">
+            <thead className="bg-ink-950 text-ink-500 text-left">
+              <tr><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Services</th><th className="px-4 py-3">Status</th><th className="px-4 py-3 text-right">Duration</th></tr>
+            </thead>
+            <tbody className="divide-y divide-ink-800">
+              {r.jobs.map((job) => (
+                <tr key={job.id}>
+                  <td className="px-4 py-3 text-ink-200">{job.vehicle} - {job.plate}</td>
+                  <td className="px-4 py-3 text-ink-400">{job.customer}</td>
+                  <td className="px-4 py-3 text-ink-400">{job.services.join(", ") || "-"}</td>
+                  <td className="px-4 py-3"><span className="badge bg-ink-800 text-ink-300">{job.status}</span></td>
+                  <td className="px-4 py-3 text-right">{job.durationMinutes == null ? "-" : `${job.durationMinutes}m`}</td>
+                </tr>
+              ))}
+              {!r.jobs.length && <EmptyRow colSpan={5} label="No assigned jobs in this window." />}
+            </tbody>
+          </table>
+        </div>
+        <div className="card !p-0 overflow-hidden">
+          <h3 className="font-semibold text-ink-200 px-4 py-3">QC sign-off details</h3>
+          <table className="w-full text-sm">
+            <thead className="bg-ink-950 text-ink-500 text-left">
+              <tr><th className="px-4 py-3">Signed at</th><th className="px-4 py-3">Vehicle</th><th className="px-4 py-3">Customer</th><th className="px-4 py-3">Status</th></tr>
+            </thead>
+            <tbody className="divide-y divide-ink-800">
+              {r.qcSignOffDetails.map((row) => (
+                <tr key={`${row.id}-${row.signedAt}`}>
+                  <td className="px-4 py-3 text-ink-500">{formatDateTime(row.signedAt)}</td>
+                  <td className="px-4 py-3 text-ink-200">{row.vehicle} - {row.plate}</td>
+                  <td className="px-4 py-3 text-ink-400">{row.customer}</td>
+                  <td className="px-4 py-3"><span className="badge bg-ink-800 text-ink-300">{row.status}</span></td>
+                </tr>
+              ))}
+              {!r.qcSignOffDetails.length && <EmptyRow colSpan={4} label="No QC sign-offs in this window." />}
+            </tbody>
+          </table>
         </div>
       </div>
     );

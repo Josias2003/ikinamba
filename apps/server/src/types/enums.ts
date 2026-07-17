@@ -19,7 +19,7 @@ export type LoyaltyTier = (typeof LOYALTY_TIERS)[number];
 export const SERVICE_CATEGORIES = ["WASH", "DETAIL", "MAINTENANCE", "INSPECTION", "ADDON"] as const;
 export type ServiceCategory = (typeof SERVICE_CATEGORIES)[number];
 
-export const APPOINTMENT_STATUSES = ["CONFIRMED", "WAITLISTED", "CANCELLED", "COMPLETED", "NO_SHOW"] as const;
+export const APPOINTMENT_STATUSES = ["CONFIRMED", "WAITLISTED", "CHECKED_IN", "CANCELLED", "COMPLETED", "NO_SHOW"] as const;
 export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
 
 export const APPOINTMENT_SOURCES = ["ONLINE", "PHONE", "WALK_IN"] as const;
@@ -38,7 +38,7 @@ export type QueueStatus = (typeof QUEUE_STATUSES)[number];
 export const BAY_STATUSES = ["IDLE", "OCCUPIED", "MAINTENANCE"] as const;
 export type BayStatus = (typeof BAY_STATUSES)[number];
 
-export const INVOICE_STATUSES = ["UNPAID", "PARTIALLY_PAID", "PAID", "REFUNDED"] as const;
+export const INVOICE_STATUSES = ["UNPAID", "PARTIALLY_PAID", "PAID", "PARTIALLY_REFUNDED", "REFUNDED"] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
 export const PAYMENT_METHODS = ["CASH", "MOMO", "AIRTEL", "CARD", "LOYALTY"] as const;

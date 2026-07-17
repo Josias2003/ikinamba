@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Car, ArrowUpRight, Receipt, CheckCircle2 } from "lucide-react";
+import { Car, ArrowUpRight, Receipt } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { NAV_GROUPS } from "../components/Layout";
 import { api } from "../lib/api";
@@ -102,6 +102,34 @@ function MetricCell({ label, value }: { label: string; value: string }) {
   );
 }
 
+function DashboardEntryList({ title, entries, now }: { title: string; entries: Entry[]; now: number }) {
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-3">
+        <span className="panel-title">{title}</span>
+        <span className="font-mono text-xs text-ink-500">{entries.length}</span>
+      </div>
+      <div className="space-y-1.5">
+        {entries.slice(0, 8).map((entry, i) => (
+          <div key={entry.id} className="flex items-center gap-3 text-sm border border-ink-800 rounded-sm px-3 py-2">
+            <span className="font-mono text-ink-600 w-5">{String(i + 1).padStart(2, "0")}</span>
+            <span className="flex-1 text-ink-200">{entry.vehicle.make} {entry.vehicle.model} - {entry.vehicle.plate}</span>
+            <span className="text-ink-500 text-xs">{entry.customer.name}</span>
+            <span className="badge bg-ink-800 text-ink-300">{entry.status.replace("_", " ")}</span>
+            <span className="font-mono text-xs text-ink-500">{elapsedSince(entry.startedAt ?? entry.checkedInAt, now)}</span>
+          </div>
+        ))}
+        {!entries.length && <p className="text-ink-400 text-sm">No vehicles in this group.</p>}
+      </div>
+      {entries.length > 8 && (
+        <Link to="/queue" className="text-xs text-brand-400 hover:text-brand-300 flex items-center gap-1 mt-3">
+          View all <ArrowUpRight size={12} />
+        </Link>
+      )}
+    </div>
+  );
+}
+
 export function Dashboard() {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -159,6 +187,7 @@ export function Dashboard() {
   const allEntries = board?.bays.flatMap((b) => b.queueEntries) ?? [];
   const inServiceCount = allEntries.filter((e) => e.status === "IN_SERVICE").length;
   const inQcCount = allEntries.filter((e) => e.status === "QUALITY_CHECK").length;
+  const activeFloorEntries = allEntries.filter((e) => ["IN_SERVICE", "QUALITY_CHECK"].includes(e.status));
 
   return (
     <div className="space-y-6">
@@ -200,28 +229,11 @@ export function Dashboard() {
           </div>
           {!board.bays.length && <p className="text-ink-500 text-sm">No bays configured yet.</p>}
 
-          {board.waiting.length === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-ink-400 border border-ink-800 rounded-sm px-3 py-2">
-              <CheckCircle2 size={14} className="text-brand-400" /> No vehicles waiting.
-            </div>
-          ) : (
-            <div className="card">
-              <div className="flex items-center justify-between mb-3">
-                <span className="panel-title">Waiting</span>
-                <span className="font-mono text-xs text-ink-500">{board.waiting.length} in queue</span>
-              </div>
-              <div className="space-y-1.5">
-                {board.waiting.slice(0, 6).map((e, i) => (
-                  <div key={e.id} className="flex items-center gap-3 text-sm border border-ink-800 rounded-sm px-3 py-2">
-                    <span className="font-mono text-ink-600 w-5">{String(i + 1).padStart(2, "0")}</span>
-                    <span className="flex-1 text-ink-200">{e.vehicle.make} {e.vehicle.model} &middot; {e.vehicle.plate}</span>
-                    <span className="text-ink-500 text-xs">{e.customer.name}</span>
-                    <span className="font-mono text-xs text-ink-500">{elapsedSince(e.checkedInAt, now)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+            <DashboardEntryList title="Active floor list" entries={activeFloorEntries} now={now} />
+            <DashboardEntryList title="Waiting queue list" entries={board.waiting} now={now} />
+          </div>
+
         </>
       )}
 

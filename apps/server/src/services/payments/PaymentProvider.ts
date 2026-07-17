@@ -12,4 +12,5 @@ export interface PaymentResult {
 
 export interface PaymentProvider {
   charge(req: PaymentRequest): Promise<PaymentResult>;
+  refund?(req: PaymentRequest): Promise<PaymentResult>;
 }

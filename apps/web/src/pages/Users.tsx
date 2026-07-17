@@ -52,6 +52,7 @@ export function Users() {
 
   const create = useMutation({ mutationFn: (body: any) => api.post("/users", body), onSuccess: () => { qc.invalidateQueries({ queryKey: ["users"] }); setShowForm(false); } });
   const deactivate = useMutation({ mutationFn: (id: string) => api.patch(`/users/${id}/deactivate`), onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }) });
+  const reactivate = useMutation({ mutationFn: (id: string) => api.patch(`/users/${id}/reactivate`), onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }) });
 
   const visibleUsers = useMemo(() => {
     if (!users) return users;
@@ -89,7 +90,13 @@ export function Users() {
                 <td className="px-4 py-3"><span className="badge bg-brand-500/10 text-brand-300">{u.role}</span></td>
                 <td className="px-4 py-3 text-ink-500">{u.totpEnabled ? "Enabled" : "Off"}</td>
                 <td className="px-4 py-3">{u.isActive ? <span className="badge-done">Active</span> : <span className="badge-danger">Inactive</span>}</td>
-                <td className="px-4 py-3">{u.isActive && <button className="btn-secondary text-xs" onClick={() => deactivate.mutate(u.id)}>Deactivate</button>}</td>
+                <td className="px-4 py-3">
+                  {u.isActive ? (
+                    <button className="btn-secondary text-xs" onClick={() => deactivate.mutate(u.id)} disabled={deactivate.isPending}>Deactivate</button>
+                  ) : (
+                    <button className="btn-secondary text-xs" onClick={() => reactivate.mutate(u.id)} disabled={reactivate.isPending}>Reactivate</button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

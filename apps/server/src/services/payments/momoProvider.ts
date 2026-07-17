@@ -127,6 +127,13 @@ export const realMomoProvider: PaymentProvider = {
       return { success: false, providerRef: "", message: "MoMo payment failed due to a connection error" };
     }
   },
+  async refund(req: PaymentRequest): Promise<PaymentResult> {
+    return {
+      success: false,
+      providerRef: req.reference,
+      message: "Automatic MoMo refund is not configured for this Collections integration; process it in the MoMo portal and record it here after confirmation.",
+    };
+  },
 };
 
 /** Returns true when all three Collections sandbox credentials are present.

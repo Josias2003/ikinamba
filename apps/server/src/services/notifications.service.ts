@@ -10,6 +10,8 @@ export type NotificationTemplate =
   | "SERVICE_STARTED"
   | "SERVICE_READY"
   | "PAYMENT_RECEIPT"
+  | "PAYMENT_REFUND"
+  | "JOB_ASSIGNED"
   | "MAINTENANCE_DUE"
   | "WIN_BACK"
   | "PROMOTIONAL"
@@ -183,6 +185,15 @@ export const templates = {
       <p><strong>Total paid: RWF ${total.toLocaleString()}</strong></p>
       <p>Loyalty points for this visit have already been credited to your account -- check your balance next time you log in or ask our front desk.</p>
       <p>Thank you for your business!</p>
+    `),
+  }),
+  paymentRefund: (name: string, amount: number, reason: string) => ({
+    subject: "Refund recorded -- New Class Car Wash",
+    html: emailLayout(`
+      <p>Hi ${name},</p>
+      <p>We've recorded a refund of <strong>RWF ${amount.toLocaleString()}</strong> on your invoice.</p>
+      <p><strong>Reason:</strong> ${reason}</p>
+      <p>If the payment was made through a mobile-money or card provider, the time it takes to appear on your side depends on that provider's processing rules.</p>
     `),
   }),
   maintenanceDue: (name: string, plate: string, dueDate: string) => ({

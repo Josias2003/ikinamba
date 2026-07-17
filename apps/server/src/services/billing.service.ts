@@ -4,6 +4,14 @@ import { providerFor } from "./payments/mockProvider.js";
 import { pointsEarnedFor, rwfValueOfPoints, tierForSpend } from "../lib/loyalty.js";
 import { notifyCustomer, templates } from "./notifications.service.js";
 
+function successfulPaidTotal(payments: { amount: number; status: string }[]) {
+  return payments.filter((p) => p.status === "SUCCESS").reduce((s, p) => s + p.amount, 0);
+}
+
+function successfulRefundTotal(payments: { amount: number; status: string }[]) {
+  return Math.abs(payments.filter((p) => p.status === "REFUNDED" && p.amount < 0).reduce((s, p) => s + p.amount, 0));
+}
+
 export async function createInvoiceForQueueEntry(
   queueEntryId: string,
   opts: { discountAmount?: number; redeemPoints?: number } = {}
@@ -82,7 +90,11 @@ export async function recordPayment(invoiceId: string, method: string, amount: n
   const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true, customer: true, items: true } });
   if (!invoice) throw notFound("Invoice not found");
 
-  const paidSoFar = invoice.payments.filter((p) => p.status === "SUCCESS").reduce((s, p) => s + p.amount, 0);
+  if (invoice.status === "REFUNDED" || invoice.status === "PARTIALLY_REFUNDED") {
+    throw conflict("Refunded invoices cannot accept new payments");
+  }
+
+  const paidSoFar = successfulPaidTotal(invoice.payments);
   if (paidSoFar >= invoice.total) throw conflict("Invoice is already fully paid");
 
   const result = await providerFor(method).charge({ amount, reference: invoiceId, phoneNumber });
@@ -121,16 +133,95 @@ export async function recordPayment(invoiceId: string, method: string, amount: n
   return { payment, providerMessage: result.message };
 }
 
-export async function refundInvoice(invoiceId: string) {
-  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true } });
+export async function refundInvoice(invoiceId: string, opts: { amount?: number; reason: string; confirmedExternal?: boolean }) {
+  const reason = opts.reason.trim();
+  if (!reason) throw badRequest("Refund reason is required");
+
+  const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true, customer: true } });
   if (!invoice) throw notFound("Invoice not found");
+  if (invoice.status !== "PAID" && invoice.status !== "PARTIALLY_REFUNDED") {
+    throw badRequest("Only fully paid or partially refunded invoices can be refunded");
+  }
   const successfulPayments = invoice.payments.filter((p) => p.status === "SUCCESS");
   if (!successfulPayments.length) throw badRequest("No successful payments to refund");
 
+  const paidTotal = successfulPaidTotal(invoice.payments);
+  const refundedTotal = successfulRefundTotal(invoice.payments);
+  const refundable = paidTotal - refundedTotal;
+  if (refundable <= 0) throw conflict("Invoice has already been fully refunded");
+
+  const amount = opts.amount ?? refundable;
+  if (amount <= 0) throw badRequest("Refund amount must be greater than zero");
+  if (amount > refundable) throw badRequest(`Refund amount exceeds refundable balance (${refundable})`);
+
+  const providerResults = [];
+  let remaining = amount;
+  for (const payment of successfulPayments) {
+    if (remaining <= 0) break;
+    const paymentRefunded = Math.abs(
+      invoice.payments
+        .filter((p) => p.status === "REFUNDED" && p.providerRef?.startsWith(`${payment.id}:`))
+        .reduce((sum, p) => sum + p.amount, 0)
+    );
+    const availableOnPayment = payment.amount - paymentRefunded;
+    if (availableOnPayment <= 0) continue;
+
+    const refundAmount = Math.min(availableOnPayment, remaining);
+    const provider = providerFor(payment.method);
+    const result = provider.refund
+      ? await provider.refund({ amount: refundAmount, reference: payment.providerRef || payment.id })
+      : { success: false, providerRef: payment.providerRef || payment.id, message: `${payment.method} refunds must be processed externally` };
+
+    if (!result.success && !opts.confirmedExternal) {
+      throw conflict(result.message);
+    }
+
+    providerResults.push({ payment, refundAmount, result });
+    remaining -= refundAmount;
+  }
+
+  if (remaining > 0) throw conflict("Could not allocate refund across successful payments");
+
+  const newRefundedTotal = refundedTotal + amount;
+  const newStatus = newRefundedTotal >= paidTotal ? "REFUNDED" : "PARTIALLY_REFUNDED";
+  const earnedPoints = pointsEarnedFor(invoice.subtotal - invoice.discountAmount);
+  const loyaltyRatio = invoice.total > 0 ? amount / invoice.total : 1;
+  const pointsToReverse = Math.min(invoice.customer.loyaltyPoints, Math.round(earnedPoints * loyaltyRatio));
+  const spendToReverse = (invoice.subtotal - invoice.discountAmount) * loyaltyRatio;
+  const newTotalSpend = Math.max(0, invoice.customer.totalSpend - spendToReverse);
+
   await prisma.$transaction([
-    ...successfulPayments.map((p) => prisma.payment.update({ where: { id: p.id }, data: { status: "REFUNDED" } })),
-    prisma.invoice.update({ where: { id: invoiceId }, data: { status: "REFUNDED" } }),
+    ...providerResults.map(({ payment, refundAmount, result }) =>
+      prisma.payment.create({
+        data: {
+          invoiceId,
+          method: payment.method,
+          amount: -refundAmount,
+          status: "REFUNDED",
+          providerRef: `${payment.id}:${result.providerRef}`,
+        },
+      })
+    ),
+    prisma.invoice.update({ where: { id: invoiceId }, data: { status: newStatus } }),
+    prisma.customer.update({
+      where: { id: invoice.customerId },
+      data: {
+        loyaltyPoints: { decrement: pointsToReverse },
+        totalSpend: newTotalSpend,
+        loyaltyTier: tierForSpend(newTotalSpend),
+      },
+    }),
+    ...(pointsToReverse > 0
+      ? [
+          prisma.loyaltyTransaction.create({
+            data: { customerId: invoice.customerId, points: -pointsToReverse, type: "ADJUST", reason: `Refund ${invoiceId}` },
+          }),
+        ]
+      : []),
   ]);
+
+  const { subject, html } = templates.paymentRefund(invoice.customer.name, amount, reason);
+  await notifyCustomer({ customerId: invoice.customerId, template: "PAYMENT_REFUND", subject, html });
 
   return prisma.invoice.findUnique({ where: { id: invoiceId }, include: { payments: true, items: true } });
 }

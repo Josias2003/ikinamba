@@ -29,6 +29,8 @@ function classify(action: string, entity: string): { category: Category; severit
       return { category: "INVENTORY", severity: "INFO" };
     case "DEACTIVATE":
       return { category: "USER_MGMT", severity: "DANGER" };
+    case "REACTIVATE":
+      return { category: "USER_MGMT", severity: "WARNING" };
     case "MANUAL_BACKUP":
       return { category: "USER_MGMT", severity: "WARNING" };
     case "CREATE":
